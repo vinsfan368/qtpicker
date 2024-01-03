@@ -11,7 +11,7 @@ import numpy as np
 
 # PySide tools
 from PySide6 import QtCore
-from PySide6.QtWidgets import QWidget, QGridLayout, QApplication
+from PySide6.QtWidgets import QWidget, QGridLayout, QApplication, QPushButton
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtGui import Qt as QtGui_Qt
 
@@ -223,12 +223,10 @@ class ImageGrid(QWidget):
         self.window = QWidget()
         layout = QGridLayout(self.window)
 
-        self.left_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Left), self.window)
-        self.right_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Right), self.window)
-        self.left_shortcut.activated.connect(self.prev_window)
-        self.right_shortcut.activated.connect(self.next_window)
-
         self.window_idx = 0
+        self.channel_idx = 0
+        self.masks_shown = True
+        self.n_channels = len(self.snaps_folders)
         self.image_views = np.zeros((self.grid_shape[0], self.grid_shape[1]), 
                                     dtype=object)
         self.roi_views = np.zeros((self.grid_shape[0], self.grid_shape[1]),
@@ -247,6 +245,42 @@ class ImageGrid(QWidget):
             # Add ROI objects
             self.roi_views[i, j] = PlotDataItem(x=[], y=[])
             self.image_views[i, j].addItem(self.roi_views[i, j])
+        
+        # Add buttons to advance windows
+        self.B_prev = QPushButton("Previous window (←)", self.window)
+        self.B_next = QPushButton("Next window (→)", self.window)
+        self.B_prev.clicked.connect(self.prev_window)
+        self.B_next.clicked.connect(self.next_window)
+        layout.addWidget(self.B_prev, i+1, 0)
+        layout.addWidget(self.B_next, i+1, 1)
+
+        # Left and right arrow key shorcuts to advance windows
+        self.left_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Left), 
+                                       self.window)
+        self.right_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Right), 
+                                        self.window)
+        self.left_shortcut.activated.connect(self.prev_window)
+        self.right_shortcut.activated.connect(self.next_window)
+
+        # Add button to toggle channels
+        self.B_toggle_chan = QPushButton("Toggle channel (⎵)", self.window)
+        self.B_toggle_chan.clicked.connect(self.toggle_channels)
+        layout.addWidget(self.B_toggle_chan, i+1, 2)
+
+        # Spacebar shortcut to toggle channels
+        self.space_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Space),
+                                        self.window)
+        self.space_shortcut.activated.connect(self.toggle_channels)
+
+        # Add button to not show masks
+        self.B_toggle_masks = QPushButton("Toggle masks (m)", self.window)
+        self.B_toggle_masks.clicked.connect(self.toggle_masks)
+        layout.addWidget(self.B_toggle_masks, i+1, 3)
+
+        # M key shortcut to toggle masks
+        self.m_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_M),
+                                    self.window)
+        self.m_shortcut.activated.connect(self.toggle_masks)
 
         # Populate image views
         self.update_window()
@@ -255,25 +289,51 @@ class ImageGrid(QWidget):
         self.window.resize(1280, 720)
         self.window.show()
     
+    def toggle_channels(self):
+        self.channel_idx += 1
+        self.channel_idx = self.channel_idx % self.n_channels
+        self.update_window()
+    
     def next_window(self):
         """Go to the next grid of images."""
-        self.remove_masks()
+        if self.masks_shown:
+            self.remove_masks()
         if self.window_idx < self.n_windows:
             self.window_idx += 1
-            self.update_window()
+        self.update_window()
+        if self.masks_shown:
+            self.add_masks()
 
     def prev_window(self):
         """Go to the previous grid of images."""
-        self.remove_masks()
+        if self.masks_shown:
+            self.remove_masks()
         if self.window_idx > 0:
             self.window_idx -= 1
-            self.update_window()
+        self.update_window()
+        if self.masks_shown:
+            self.add_masks()
+    
+    def toggle_masks(self):
+        """Toggle masks on and off."""
+        if self.masks_shown:
+            self.remove_masks()
+        else:
+            self.add_masks()
+        self.masks_shown = not self.masks_shown
+    
+    def add_masks(self):
+        """Add the masks to their respective ImageViews."""
+        for (i, j), _ in np.ndenumerate(self.image_views):
+            for mask_item in self.masks[self.window_idx, i, j]:
+                mask_item.add_to_imv(self.image_views[i, j])
     
     def remove_masks(self):
         """Save the masks remove them from their respective ImageViews."""
         for (i, j), _ in np.ndenumerate(self.image_views):
             for mask_item in self.masks[self.window_idx, i, j]:
                 mask_item.remove_from_imv()
+
     
     def update_window(self):
         """Update the current window."""
@@ -283,11 +343,14 @@ class ImageGrid(QWidget):
         elif self.window_idx >= self.n_windows:
             self.window_idx = self.n_windows - 1
         
+        # Make sure channel index is valid
+        self.channel_idx = self.channel_idx % self.n_channels
+        
         for (i, j), _ in np.ndenumerate(self.image_views):
-            self.image_views[i, j].setImage(self.sorted_data[self.window_idx, i, j, 0])
-
-            for mask_item in self.masks[self.window_idx, i, j]:
-                mask_item.add_to_imv(self.image_views[i, j])
+            self.image_views[i, j].setImage(self.sorted_data[self.window_idx, 
+                                                             i, 
+                                                             j, 
+                                                             self.channel_idx])
             
             # Add ROI as a red box
             if self.rois is not None:
@@ -307,8 +370,8 @@ class ImageGrid(QWidget):
 
 
 if __name__ == '__main__':
-    folder = str(input("Drag output automation folder: ").strip())
+    automation_folder = os.path.join(os.path.dirname(__file__), "sample_data")
     app = QApplication(sys.argv)
-    window = ImageGrid(folder, shape=(2, 4), roi_masks_only=True)
+    window = ImageGrid(automation_folder, shape=(2, 4), roi_masks_only=True)
     window.show()
     app.exec()
