@@ -24,6 +24,9 @@ from pyqtgraph import ImageView, ImageItem, PolyLineROI, mkColor, PlotDataItem
 from quot.read import ImageReader
 from quot.helper import get_edges, get_ordered_mask_points
 
+# Progress bar
+from tqdm import tqdm
+
 
 class ClickableMask(ImageItem):
     def __init__(self, parent):
@@ -41,7 +44,6 @@ class ClickableMask(ImageItem):
     def mouseClickEvent(self, event):
         if event.button() == QtCore.Qt.LeftButton:
             pos = self.mapFromScene(event.scenePos())
-            print(pos)
             y, x = pos.x(), pos.y()
             if 0 <= x < self.mask.shape[1] and 0 <= y < self.mask.shape[0]:
                 if self.mask[int(x), int(y)]:
@@ -49,6 +51,7 @@ class ClickableMask(ImageItem):
 
     def on_mask_clicked(self):
         self.parent.toggle_label()
+        print(self.parent.curr_label)
 
 
 class EditableMask(PolyLineROI):
@@ -66,7 +69,7 @@ class ClickableEditableLabeledMask:
                  possible_labels: list[str]=['good', 'bad'],
                  colors: list[str]=['g', 'r'],
                  clickable: bool=True, 
-                 opacity: float=0.1):
+                 opacity: float=0.15):
         
         self.mask = mask
         self.imv = imv
@@ -122,13 +125,26 @@ class ClickableEditableLabeledMask:
         
 class ImageGrid(QWidget):
     """
-    path       :   str, path to automation folder
+    path                    :   str, path to automation folder
+    shape                   :   tuple[int, int], shape of grid
+    show_image_histogram    :   bool, show LUT
+    roi_masks_only          :   bool, only show masks within ROI,
+                                which saves loading time
+    parent                  :   root QWidget, if any
     """
-    def __init__(self, path, shape, show_image_histogram=True, parent=None):
+    def __init__(self, 
+                 path: str, 
+                 shape: tuple[int, int],
+                 show_image_histogram: bool=True,
+                 roi_masks_only: bool=False,
+                 mask_opacity: float=0.15, 
+                 parent: object=None):
         super(ImageGrid, self).__init__(parent=parent)
         self.path = path
         self.grid_shape = shape
         self.show_hists = show_image_histogram
+        self.roi_masks_only = roi_masks_only
+        self.opacity = mask_opacity
 
         self.init_data()
         self.init_UI()
@@ -151,14 +167,14 @@ class ImageGrid(QWidget):
         self.masks.fill([])
 
         if os.path.exists(os.path.join(self.path, 'rois.txt')):
-            self.rois = np.loadtxt(os.path.join(self.path, "rois.txt"), delimiter=',')
+            self.rois = np.loadtxt(os.path.join(self.path, "rois.txt"), delimiter=',', dtype=int)
             pad = self.sorted_data.shape[0] - self.rois.shape[0]
             self.rois = np.pad(self.rois, ((0, pad), (0, 0)))
         else:
             self.rois = None
 
-        # Loop over snaps folders
-        for i in range(self.n_snaps):
+        # Loop over snap images, snap folders
+        for i in tqdm(range(self.n_snaps), "Loading images and masks..."):
             for j, folder in enumerate(self.snaps_folders):
                 # Load image into array
                 filename = os.path.join(folder, f"{i+1}.tif")
@@ -168,10 +184,25 @@ class ImageGrid(QWidget):
             # Get mask corresponding to this image and read in
             mask_filename = os.path.join(self.path, "masks", f"{i+1}.csv")
             if os.path.exists(mask_filename):
+                # Load mask from CSV
                 mask = np.loadtxt(mask_filename, delimiter=',')
+
+                # Only look at masks inside ROI if specified
+                if self.roi_masks_only and self.rois is not None:
+                    # Get ROI for this image
+                    roi = self.rois[i]
+                    # Crop mask to ROI
+                    crop = mask[roi[1]:roi[3], roi[0]:roi[2]]
+                    # Get only unique indices within the ROI
+                    ma_indices = np.unique(crop[crop > 0])
+                else:
+                    # Else get all unique indices in the mask
+                    ma_indices = np.unique(mask[mask > 0])
+                    
                 # Create a mask for each non-zero value
-                self.masks[i] = [ClickableEditableLabeledMask(mask == v, opacity=0.1) \
-                                 for v in np.unique(mask[mask > 0])]
+                self.masks[i] = [ClickableEditableLabeledMask(mask == v, 
+                                                              opacity=self.opacity) \
+                                 for v in ma_indices]
 
         # Reshape everything to (n_windows, grid_shape[0], grid_shape[1], ...)
         self.sorted_data = np.reshape(self.sorted_data, 
@@ -278,6 +309,6 @@ class ImageGrid(QWidget):
 if __name__ == '__main__':
     folder = str(input("Drag output automation folder: ").strip())
     app = QApplication(sys.argv)
-    window = ImageGrid(folder, shape=(2, 4))
+    window = ImageGrid(folder, shape=(2, 4), roi_masks_only=True)
     window.show()
     app.exec()
