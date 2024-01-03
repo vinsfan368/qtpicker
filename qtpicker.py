@@ -1,4 +1,3 @@
-
 import sys
 
 # Paths, suppress annoying Qt warning
@@ -245,51 +244,57 @@ class ImageGrid(QWidget):
             # Add ROI objects
             self.roi_views[i, j] = PlotDataItem(x=[], y=[])
             self.image_views[i, j].addItem(self.roi_views[i, j])
+
+        # Add button to cycle through channels
+        self.B_cycle_chan = QPushButton("Cycle channel (w)", self.window)
+        self.B_cycle_chan.clicked.connect(self.cycle_channels)
+        layout.addWidget(self.B_cycle_chan, i+1, 0)
+
+        # w shortcut to cycle through channels
+        self.w_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_W), self.window)
+        self.w_shortcut.activated.connect(self.cycle_channels)
+
+        # Add button to toggle showing masks
+        self.B_toggle_masks = QPushButton("Toggle masks (s)", self.window)
+        self.B_toggle_masks.clicked.connect(self.toggle_masks)
+        layout.addWidget(self.B_toggle_masks, i+1, 1)
+
+        # s key shortcut to toggle masks
+        self.s_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_S), self.window)
+        self.s_shortcut.activated.connect(self.toggle_masks)
         
         # Add buttons to advance windows
-        self.B_prev = QPushButton("Previous window (←)", self.window)
-        self.B_next = QPushButton("Next window (→)", self.window)
+        self.B_prev = QPushButton("Previous window (a)", self.window)
+        self.B_next = QPushButton("Next window (d)", self.window)
         self.B_prev.clicked.connect(self.prev_window)
         self.B_next.clicked.connect(self.next_window)
-        layout.addWidget(self.B_prev, i+1, 0)
-        layout.addWidget(self.B_next, i+1, 1)
+        layout.addWidget(self.B_prev, i+1, 2)
+        layout.addWidget(self.B_next, i+1, 3)
 
-        # Left and right arrow key shorcuts to advance windows
-        self.left_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Left), 
-                                       self.window)
-        self.right_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Right), 
-                                        self.window)
-        self.left_shortcut.activated.connect(self.prev_window)
-        self.right_shortcut.activated.connect(self.next_window)
+        # a and d key shortcuts to advance windows
+        self.a_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_A), self.window)
+        self.d_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_D), self.window)
+        self.a_shortcut.activated.connect(self.prev_window)
+        self.d_shortcut.activated.connect(self.next_window)
 
-        # Add button to toggle channels
-        self.B_toggle_chan = QPushButton("Toggle channel (⎵)", self.window)
-        self.B_toggle_chan.clicked.connect(self.toggle_channels)
-        layout.addWidget(self.B_toggle_chan, i+1, 2)
+        # Add a button to toggle editable masks
+        self.B_toggle_editable = QPushButton("Toggle editable (e)", self.window)
+        self.B_toggle_editable.clicked.connect(self.toggle_editable)
+        layout.addWidget(self.B_toggle_editable, i+2, 0)
 
-        # Spacebar shortcut to toggle channels
-        self.space_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Space),
-                                        self.window)
-        self.space_shortcut.activated.connect(self.toggle_channels)
-
-        # Add button to not show masks
-        self.B_toggle_masks = QPushButton("Toggle masks (m)", self.window)
-        self.B_toggle_masks.clicked.connect(self.toggle_masks)
-        layout.addWidget(self.B_toggle_masks, i+1, 3)
-
-        # M key shortcut to toggle masks
-        self.m_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_M),
-                                    self.window)
-        self.m_shortcut.activated.connect(self.toggle_masks)
-
+        # e key shortcut to toggle editable masks
+        self.e_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_E), self.window)
+        self.e_shortcut.activated.connect(self.toggle_editable)
+        
         # Populate image views
         self.update_window()
+        self.add_masks()
 
         # Resize main window
         self.window.resize(1280, 720)
         self.window.show()
     
-    def toggle_channels(self):
+    def cycle_channels(self):
         self.channel_idx += 1
         self.channel_idx = self.channel_idx % self.n_channels
         self.update_window()
@@ -322,6 +327,13 @@ class ImageGrid(QWidget):
             self.add_masks()
         self.masks_shown = not self.masks_shown
     
+    def toggle_editable(self):
+        if not self.masks_shown:
+            self.toggle_masks()
+        for (i, j), _ in np.ndenumerate(self.image_views):
+            for mask_item in self.masks[self.window_idx, i, j]:
+                mask_item.toggle_editable()        
+            
     def add_masks(self):
         """Add the masks to their respective ImageViews."""
         for (i, j), _ in np.ndenumerate(self.image_views):
@@ -333,7 +345,6 @@ class ImageGrid(QWidget):
         for (i, j), _ in np.ndenumerate(self.image_views):
             for mask_item in self.masks[self.window_idx, i, j]:
                 mask_item.remove_from_imv()
-
     
     def update_window(self):
         """Update the current window."""
