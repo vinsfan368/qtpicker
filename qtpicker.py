@@ -8,6 +8,8 @@ from glob import glob
 # Arrays
 import numpy as np
 
+from matplotlib.path import Path 
+
 # PySide tools
 from PySide6 import QtCore
 from PySide6.QtWidgets import QWidget, QGridLayout, QApplication, QPushButton
@@ -25,6 +27,7 @@ from quot.helper import get_edges, get_ordered_mask_points
 
 # Progress bar
 from tqdm import tqdm
+
 
 
 class ClickableMask(ImageItem):
@@ -56,9 +59,28 @@ class ClickableMask(ImageItem):
 class EditableMask(PolyLineROI):
     def __init__(self, parent):
         super().__init__(parent.points, closed=True)
-        #self.mask = parent.mask
-        #self.points = parent.points
-        #self.opacity = parent.opacity
+        self.parent = parent
+        self.sigRegionChanged.connect(self.mask_changed)
+
+    def create_enclosed_mask(self, points, shape):
+        """
+        Create an enclosed mask from a list of points.
+
+        Parameters:
+        points: List of points. Each point is a tuple of (x, y).
+        shape: Shape of the mask. A tuple of (height, width).
+
+        Returns:
+        An enclosed mask with the same shape. The mask has a value of 1 inside the enclosed area and 0 elsewhere.
+        """
+        y, x = np.indices(shape)
+        coordinates = np.column_stack((x.flatten(), y.flatten()))
+        mask = Path(points).contains_points(coordinates).reshape(shape)
+        return mask
+    
+    def mask_changed(self):
+        self.parent.points = np.asarray([[self.mapSceneToParent(p[1]).x(), self.mapSceneToParent(p[1]).y()] for p in super().getSceneHandlePositions()])
+        self.parent.mask = self.create_enclosed_mask(self.parent.points, self.parent.shape)
 
 
 class ClickableEditableLabeledMask:
@@ -71,10 +93,11 @@ class ClickableEditableLabeledMask:
                  opacity: float=0.15):
         
         self.mask = mask
+        self.shape = mask.shape
         self.imv = imv
         self.opacity = opacity
         self.clickable = clickable
-        self.points = get_ordered_mask_points(get_edges(mask))
+        self.points = get_ordered_mask_points(get_edges(mask), max_points=30)
         # Reverse points to match pyqtgraph's row-major order
         self.points = np.flip(self.points, axis=1)
 
@@ -86,6 +109,7 @@ class ClickableEditableLabeledMask:
 
         self.clickable_mask = ClickableMask(self)
         self.editable_mask = EditableMask(self)
+
 
     def add_to_imv(self, imv=None):
         """Add the mask to the image view, overwriting self.imv if provided."""
@@ -110,6 +134,9 @@ class ClickableEditableLabeledMask:
     def toggle_editable(self):
         """Change between a clickable and an editable mask."""
         self.remove_from_imv()
+        # Update ClickableMask in case points are changed
+        if not self.clickable:
+            self.clickable_mask = ClickableMask(self)
         self.clickable = not self.clickable
         self.add_to_imv()
     
@@ -393,6 +420,6 @@ class ImageGrid(QWidget):
 if __name__ == '__main__':
     automation_folder = os.path.join(os.path.dirname(__file__), "sample_data")
     app = QApplication(sys.argv)
-    window = ImageGrid(automation_folder, shape=(2, 4), roi_masks_only=False)
+    window = ImageGrid(automation_folder, shape=(2, 4), roi_masks_only=True)
     window.show()
     app.exec()
