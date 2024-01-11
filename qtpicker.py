@@ -222,7 +222,7 @@ class ImageGrid(QWidget):
             self.rois = None
 
         # Loop over snap images, snap folders
-        for i in tqdm(range(self.n_snaps), "Loading images and masks..."):
+        for i in tqdm(range(self.n_snaps), "Loading images and masks"):
             for j, folder in enumerate(self.snaps_folders):
                 # Load image into array
                 filename = os.path.join(folder, f"{i+1}.tif")
@@ -445,8 +445,8 @@ class ImageGrid(QWidget):
                 self.roi_views[i, j].setData(x=[], y=[], pen='r')
     
     def finish(self):
-        """Save masks and close the window."""
-        # Not implemented for masks outside ROI or if no ROIs are provided.
+        """Save and apply masks."""
+        # Not implemented yet for masks outside ROI or if no ROIs are provided.
         if self.rois is None:
             pass
         # Make sure the masks folder exists
@@ -456,19 +456,21 @@ class ImageGrid(QWidget):
         masks_flat = self.masks.flatten()    
         rois = np.reshape(self.rois, (*masks_flat.shape, 4))
         # Save masks
-        for (i,), masks in tqdm(np.ndenumerate(masks_flat), total=masks_flat.shape[0]):
+        for (i,), masks in tqdm(np.ndenumerate(masks_flat), 
+                                total=masks_flat.shape[0]):
             # Get trajs.csv file,  make sure it exists
             trajs_csv = os.path.join(self.path, 'tracking', f"{i+1}.csv")
             if not os.path.isfile(trajs_csv):
                 print(f"{trajs_csv} not found, skipping...")
                 continue
             # Get masks to apply, skip if none are good
-            to_apply = [np.flip(ma.points - [rois[i, 0], rois[i, 1]], axis=1) 
-                        for ma in masks if ma.curr_label != 'bad']
-            if len(to_apply) == 0:
+            valid_masks = [mask for mask in masks if mask.curr_label != 'bad']
+            if len(valid_masks) < 1:
                 print(f"No masks to apply for {trajs_csv}, skipping...")
                 continue
             # Apply masks and save
+            to_apply = [np.flip(mask.points - [rois[i, 0], rois[i, 1]], axis=1) 
+                        for mask in valid_masks]
             trajs = pd.read_csv(trajs_csv)
             trajs['mask_index'] = apply_masks(to_apply, 
                                               trajs, 
@@ -542,23 +544,41 @@ class ImageGrid(QWidget):
                 for ax in axs:
                     ax.axis('off')
 
-                plt.savefig(os.path.splitext(trajs_csv)[0] + "_mask.png", 
+                plt.savefig(os.path.join(self.path, "mask_plots", f"{i+1}.png"), 
                             dpi=600, 
                             bbox_inches='tight')
-
-            # Save a CSV file with trajectories inside only that mask
-            for ma_index in pd.unique(trajs[trajs['mask_index'] > 0]['mask_index']):
-                # Get trajectories inside mask
+            
+            mask_dfs = []
+            for j, ma_index in enumerate(pd.unique(trajs[trajs['mask_index'] > 0]['mask_index'])):
+                # Save a CSV file with trajectories inside only that mask                
                 trajs_in_mask = trajs[trajs['mask_index'] == ma_index]
                 out = os.path.join(self.path, 
                                    'masked_trajs', 
                                    f"{i+1}_{ma_index}_trajs.csv")
-                # Save to CSV
                 trajs_in_mask.to_csv(out, index=False)
-        
+
+                # Save a CSV file with the mask points
+                mask_df = pd.DataFrame(to_apply[j], columns=['x', 'y'])
+                mask_df['mask_index'] = ma_index
+                for chan in self.snaps_folders:
+                    filename = os.path.join(chan, f"{i+1}.tif")
+                    im = ImageReader(filename).get_frame(0)
+                    mask = valid_masks[j].mask
+                    area = np.sum(mask)
+                    mask_df["area"] = area
+                    masked = mask * im
+                    mask_df[f"{os.path.basename(chan)}_mean_intensity"] = np.sum(masked) / area
+                mask_dfs.append(mask_df)
+            mask_df = pd.concat(mask_dfs)
+            out = os.path.join(self.path, 
+                               'mask_measurements', 
+                               f"{i+1}_masks.csv")
+            mask_df.to_csv(out, index=False)
+
         # Save ImageGrid as pickle
-        with open(os.path.join(self.path, 'ImageGrid.pkl'), 'wb') as fh:
-            pickle.dump(self, fh)
+        #with open(os.path.join(self.path, 'ImageGrid.pkl'), 'wb') as fh:
+        #    pickle.dump(self, fh)
+
 
 if __name__ == '__main__':
     automation_folder = os.path.join(os.path.dirname(__file__), 
@@ -569,5 +589,4 @@ if __name__ == '__main__':
                        save_mask_png=True, 
                        roi_masks_only=True, 
                        min_mask_area=1000)
-    window.show()
     app.exec()
