@@ -295,8 +295,8 @@ class ImageGrid(QWidget):
             self.image_views[i, j].addItem(self.roi_views[i, j])
 
         # Add buttons to go through channels
-        self.B_next_chan = QPushButton("Next channel (w)", self.window)
-        self.B_prev_chan = QPushButton("Previous channel (s)", self.window)
+        self.B_next_chan = QPushButton("Next channel (w, ↑)", self.window)
+        self.B_prev_chan = QPushButton("Previous channel (s, ↓)", self.window)
         self.B_next_chan.clicked.connect(self.next_channel)
         self.B_prev_chan.clicked.connect(self.prev_channel)
         layout.addWidget(self.B_next_chan, i+1, 0)
@@ -305,12 +305,16 @@ class ImageGrid(QWidget):
         # w shortcut to go to next channel, s to go to previous
         self.w_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_W), self.window)
         self.s_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_S), self.window)
+        self.down_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Down), self.window)
+        self.up_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Up), self.window)
         self.w_shortcut.activated.connect(self.next_channel)
         self.s_shortcut.activated.connect(self.prev_channel)
+        self.down_shortcut.activated.connect(self.next_channel)
+        self.up_shortcut.activated.connect(self.prev_channel)
         
         # Add buttons to advance windows
-        self.B_prev = QPushButton("Previous window (a)", self.window)
-        self.B_next = QPushButton("Next window (d)", self.window)
+        self.B_prev = QPushButton("Previous window (a, ←)", self.window)
+        self.B_next = QPushButton("Next window (d, →)", self.window)
         self.B_prev.clicked.connect(self.prev_window)
         self.B_next.clicked.connect(self.next_window)
         layout.addWidget(self.B_prev, i+1, 2)
@@ -319,8 +323,12 @@ class ImageGrid(QWidget):
         # a and d key shortcuts to advance windows
         self.a_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_A), self.window)
         self.d_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_D), self.window)
+        self.left_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Left), self.window)
+        self.right_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Right), self.window)
         self.a_shortcut.activated.connect(self.prev_window)
         self.d_shortcut.activated.connect(self.next_window)
+        self.left_shortcut.activated.connect(self.prev_window)
+        self.right_shortcut.activated.connect(self.next_window)
 
         # Add button to toggle showing masks
         self.B_toggle_masks = QPushButton("Toggle masks (q)", self.window)
@@ -341,7 +349,7 @@ class ImageGrid(QWidget):
         self.e_shortcut.activated.connect(self.toggle_editable)
 
         # Add a button to finish and apply masks
-        self.B_toggle_editable = QPushButton("Finish", self.window)
+        self.B_toggle_editable = QPushButton("Apply masks", self.window)
         self.B_toggle_editable.clicked.connect(self.finish)
         layout.addWidget(self.B_toggle_editable, i+2, 3)
         
