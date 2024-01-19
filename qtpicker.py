@@ -457,9 +457,13 @@ class ImageGrid(QWidget):
         # Not implemented yet for masks outside ROI or if no ROIs are provided.
         if self.rois is None:
             pass
-        # Make sure the masks folder exists
+        # Make sure output folders exist
         if not os.path.exists(os.path.join(self.path, 'masked_trajs')):
             os.makedirs(os.path.join(self.path, 'masked_trajs'))
+        if not os.path.exists(os.path.join(self.path, 'mask_plots')):
+            os.makedirs(os.path.join(self.path, 'mask_plots'))
+        if not os.path.exists(os.path.join(self.path, 'mask_measurements')):
+            os.makedirs(os.path.join(self.path, 'mask_measurements'))
 
         masks_flat = self.masks.flatten()    
         rois = np.reshape(self.rois, (*masks_flat.shape, 4))
@@ -520,36 +524,39 @@ class ImageGrid(QWidget):
 
                 # Make the 3-panel plot
                 plt.close('all')
-                _, axs = plt.subplots(1, 3, figsize=(9, 3))
-
-                axs[0].imshow(mask_im, cmap='gray')
-                axs[1].imshow(H, cmap='gray')
-                axs[2].scatter(
+                _, axs = plt.subplots(2, 2, figsize=(8, 8))
+                filename = os.path.join(self.path, 'snaps3', f"{i+1}.tif")
+                im = ImageReader(filename).get_frame(0)
+                axs[0, 0].imshow(im, cmap='gray')
+                axs[0, 1].imshow(mask_im, cmap='gray')
+                axs[1, 0].imshow(H, cmap='gray')
+                axs[1, 1].scatter(
                     L[inside, 1],
                     y_max-L[inside, 0],
                     c=densities[inside],
-                    cmap="viridis",
+                    cmap="Greens",
                     norm=norm,
-                    s=30
+                    s=20
                 )
-                axs[2].scatter(
+                axs[1, 1].scatter(
                     L[outside, 1],
                     y_max-L[outside, 0],
-                    cmap="magma",
+                    cmap="Reds",
                     c=densities[outside],
                     norm=norm,
-                    s=30
+                    s=20
                 )
-                axs[2].set_xlim((0, x_max))
-                axs[2].set_ylim((0, y_max))
-                axs[2].set_aspect('equal')
+                axs[1, 1].set_xlim((0, x_max))
+                axs[1, 1].set_ylim((0, y_max))
+                axs[1, 1].set_aspect('equal')
 
                 # Subplot labels
-                axs[0].set_title("Mask definitions")
-                axs[1].set_title("Localization density")
-                axs[2].set_title("Inside/outside")
+                axs[0, 0].set_title("Masked image")
+                axs[0, 1].set_title("Mask definitions")
+                axs[1, 0].set_title("Localization density")
+                axs[1, 1].set_title("Inside/outside")
 
-                for ax in axs:
+                for ax in axs.flatten():
                     ax.axis('off')
 
                 plt.savefig(os.path.join(self.path, "mask_plots", f"{i+1}.png"), 
