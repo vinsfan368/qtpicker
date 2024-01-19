@@ -181,6 +181,8 @@ class ImageGrid(QWidget):
                  save_mask_png: bool=False,
                  roi_masks_only: bool=False,
                  min_mask_area: int=0,
+                 possible_labels: list[str]=['good', 'bad'],
+                 colors: list[str]=['g', 'r'],
                  mask_opacity: float=0.15, 
                  parent: object=None):
         super(ImageGrid, self).__init__(parent=parent)
@@ -191,6 +193,8 @@ class ImageGrid(QWidget):
         self.roi_masks_only = roi_masks_only
         self.opacity = mask_opacity
         self.min_mask_area = min_mask_area
+        self.possible_labels = possible_labels
+        self.colors = colors
 
         self.init_data()
         self.init_UI()
@@ -251,7 +255,9 @@ class ImageGrid(QWidget):
                     
                 # Create a mask for each non-zero value
                 self.masks[i] = [ClickableEditableLabeledMask(mask == v, 
-                                                              opacity=self.opacity) \
+                                                              opacity=self.opacity,
+                                                              possible_labels=self.possible_labels,
+                                                              colors=self.colors) \
                                  for v in ma_indices]
 
         # Reshape everything to (n_windows, grid_shape[0], grid_shape[1], ...)
@@ -607,6 +613,8 @@ if __name__ == '__main__':
     window = ImageGrid(path, 
                        shape=(2, 4),
                        save_mask_png=True, 
-                       roi_masks_only=True, 
+                       roi_masks_only=True,
+                       possible_labels=['good', 'bad'],
+                       colors=['g', 'r'], 
                        min_mask_area=1000)
     app.exec()
