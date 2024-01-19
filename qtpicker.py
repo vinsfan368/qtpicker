@@ -596,10 +596,15 @@ class ImageGrid(QWidget):
 
 
 if __name__ == '__main__':
-    automation_folder = os.path.join(os.path.dirname(__file__), 
-                                     "sample_data")
+    path = str(input("Drag automation parent folder: ").strip())
+    if not os.path.isdir(path) and os.name == 'posix':
+        path = path.replace("\\ ", " ")
+    if not os.path.isdir(path):
+        print(f"{path} is not a valid path; browsing sample data instead...")
+        path = os.path.join(os.path.dirname(__file__), "sample_data")
+
     app = QApplication(sys.argv)
-    window = ImageGrid(automation_folder, 
+    window = ImageGrid(path, 
                        shape=(2, 4),
                        save_mask_png=True, 
                        roi_masks_only=True, 
