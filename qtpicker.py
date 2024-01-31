@@ -458,18 +458,21 @@ class ImageGrid(QWidget):
             else:
                 self.roi_views[i, j].setData(x=[], y=[], pen='r')
     
+    def mask_summary_plot(self):
+        """Make a summary plot of the masks. This code was adapted
+        from quot: https://github.com/alecheckert/quot"""
+        pass
+    
     def finish(self):
         """Save and apply masks."""
         # Not implemented yet for masks outside ROI or if no ROIs are provided.
         if self.rois is None:
             pass
         # Make sure output folders exist
-        if not os.path.exists(os.path.join(self.path, 'masked_trajs')):
-            os.makedirs(os.path.join(self.path, 'masked_trajs'))
-        if not os.path.exists(os.path.join(self.path, 'mask_plots')):
-            os.makedirs(os.path.join(self.path, 'mask_plots'))
-        if not os.path.exists(os.path.join(self.path, 'mask_measurements')):
-            os.makedirs(os.path.join(self.path, 'mask_measurements'))
+        output_folders = ['masked_trajs', 'mask_plots', 'mask_measurements']
+        for folder in output_folders:
+            if not os.path.exists(os.path.join(self.path, folder)):
+                os.makedirs(os.path.join(self.path, folder))
 
         masks_flat = self.masks.flatten()    
         rois = np.reshape(self.rois, (*masks_flat.shape, 4))
@@ -486,16 +489,16 @@ class ImageGrid(QWidget):
             if len(valid_masks) < 1:
                 print(f"No masks to apply for {trajs_csv}, skipping...")
                 continue
-            # Apply masks and save
-            to_apply = [np.flip(mask.points - [rois[i, 0], rois[i, 1]], axis=1) 
-                        for mask in valid_masks]
+            # Apply masks and save; points need 
+            # to be flipped to match row-major order
+            point_sets = [np.flip(mask.points - [rois[i, 0], rois[i, 1]], axis=1) 
+                          for mask in valid_masks]
             trajs = pd.read_csv(trajs_csv)
-            trajs['mask_index'] = apply_masks(to_apply, 
+            trajs['mask_index'] = apply_masks(point_sets, 
                                               trajs, 
                                               mode='all_points')
             out_path = os.path.splitext(trajs_csv)[0] + "_trajs.csv"
             trajs.to_csv(out_path, index=False)
-
             if self.save_mask_png:
                 x_max = rois[i, 2] - rois[i, 0]
                 y_max = rois[i, 3] - rois[i, 1]
@@ -505,8 +508,8 @@ class ImageGrid(QWidget):
                 
                 # Generate an image where each pixel is assigned to a mask
                 mask_im = np.zeros((y_max, x_max), dtype=np.int64)
-                for j, point_set in enumerate(to_apply):
-                    path = Path(point_set, closed=True)
+                for j, points in enumerate(point_sets):
+                    path = Path(points, closed=True)
                     mask_im[path.contains_points(YX).reshape((y_max, x_max))] = j+1
 
                 # Generate localization density
@@ -570,7 +573,10 @@ class ImageGrid(QWidget):
                             bbox_inches='tight')
             
             mask_dfs = []
-            for j, ma_index in enumerate(pd.unique(trajs[trajs['mask_index'] > 0]['mask_index'])):
+            valid_idx = pd.unique(trajs[trajs['mask_index'] > 0]['mask_index'])
+            if len(valid_idx) < 1:
+                continue
+            for j, ma_index in enumerate(valid_idx):
                 # Save a CSV file with trajectories inside only that mask                
                 trajs_in_mask = trajs[trajs['mask_index'] == ma_index]
                 out = os.path.join(self.path, 
@@ -579,7 +585,7 @@ class ImageGrid(QWidget):
                 trajs_in_mask.to_csv(out, index=False)
 
                 # Save a CSV file with the mask points
-                mask_df = pd.DataFrame(to_apply[j], columns=['x', 'y'])
+                mask_df = pd.DataFrame(point_sets[j], columns=['x', 'y'])
                 mask_df['mask_index'] = ma_index
                 for chan in self.snaps_folders:
                     filename = os.path.join(chan, f"{i+1}.tif")
