@@ -201,6 +201,7 @@ class ImageGrid(QWidget):
         self.possible_labels = possible_labels
         self.colors = colors
         self.freestyle_mode = False
+        self.editable = False
 
         self.init_data()
         self.init_UI()
@@ -362,9 +363,13 @@ class ImageGrid(QWidget):
         self.q_shortcut.activated.connect(self.toggle_masks)
 
         # Add a button to freestyle draw masks
-        self.B_freestyle = QPushButton("Draw masks", self.window)
+        self.B_freestyle = QPushButton("Draw masks (r)", self.window)
         self.B_freestyle.clicked.connect(self.freestyle)
         layout.addWidget(self.B_freestyle, i+2, 2)
+
+        # r shortcut to draw masks
+        self.r_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_R), self.window)
+        self.r_shortcut.activated.connect(self.freestyle)
 
         # Add a button to finish and apply masks
         self.B_apply_masks = QPushButton("Apply masks", self.window)
@@ -416,6 +421,7 @@ class ImageGrid(QWidget):
         self.masks_shown = not self.masks_shown
     
     def toggle_editable(self):
+        self.editable = not self.editable
         if not self.masks_shown:
             self.toggle_masks()
         for i, j in np.ndindex(self.image_views.shape):
@@ -443,7 +449,7 @@ class ImageGrid(QWidget):
             for i, j in np.ndindex(self.image_views.shape):
                 self.image_views[i, j].imageItem.setDrawKernel(kernel=kernel, 
                 mask=None, center=(0,0))
-            self.B_freestyle.setText("Finish drawing")
+            self.B_freestyle.setText("Finish drawing (r)")
         # End freestyle mode by creating a mask from the drawn points
         else:
             self.freestyle_mode = False
@@ -463,7 +469,8 @@ class ImageGrid(QWidget):
                     ma = ClickableEditableLabeledMask(enclosed_mask,
                                                       opacity=self.opacity,
                                                       possible_labels=self.possible_labels,
-                                                      colors=self.colors)
+                                                      colors=self.colors,
+                                                      clickable=(not self.editable))
         
                     self.masks[self.window_idx, i, j].append(ma)
                 except IndexError:
@@ -471,7 +478,7 @@ class ImageGrid(QWidget):
             
             self.add_masks()
             self.draw_val += 2
-            self.B_freestyle.setText("Draw masks")
+            self.B_freestyle.setText("Draw masks (r)")
 
     def update_window(self):
         """Update the current window."""
