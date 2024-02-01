@@ -443,7 +443,7 @@ class ImageGrid(QWidget):
             for i, j in np.ndindex(self.image_views.shape):
                 self.image_views[i, j].imageItem.setDrawKernel(kernel=kernel, 
                 mask=None, center=(0,0))
-            self.B_freestyle.setText("Finish freestyle")
+            self.B_freestyle.setText("Finish drawing")
         # End freestyle mode by creating a mask from the drawn points
         else:
             self.freestyle_mode = False
@@ -471,7 +471,7 @@ class ImageGrid(QWidget):
             
             self.add_masks()
             self.draw_val += 2
-            self.B_freestyle.setText("Freestyle")
+            self.B_freestyle.setText("Draw masks")
 
     def update_window(self):
         """Update the current window."""
