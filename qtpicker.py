@@ -38,6 +38,31 @@ from tqdm import tqdm
 import pickle
 
 
+def create_enclosed_mask(points, shape):
+    """
+    Create an enclosed mask from a list of points.
+
+    Parameters:
+    points: List of points. Each point is a tuple of (x, y).
+    shape: Shape of the mask. A tuple of (height, width).
+
+    Returns:
+    An enclosed mask with the same shape. 
+    The mask has a value of 1 inside the 
+    enclosed area and 0 elsewhere.
+    """
+    y, x = np.indices(shape)
+    coordinates = np.column_stack((x.flatten(), y.flatten()))
+    mask = Path(points).contains_points(coordinates).reshape(shape)
+    return mask
+
+def get_mask_points(mask, max_points=25):
+    """Wrapper for quot.helper.get_ordered_mask_points, executes
+    this function and flips the points to match row-major order."""
+    return np.flip(get_ordered_mask_points(mask, max_points=max_points), 
+                   axis=1)
+
+
 class ClickableMask(ImageItem):
     def __init__(self, parent):
         self.parent = parent
@@ -69,30 +94,13 @@ class EditableMask(PolyLineROI):
         self.parent = parent
         self.sigRegionChanged.connect(self.mask_changed)
 
-    def create_enclosed_mask(self, points, shape):
-        """
-        Create an enclosed mask from a list of points.
 
-        Parameters:
-        points: List of points. Each point is a tuple of (x, y).
-        shape: Shape of the mask. A tuple of (height, width).
-
-        Returns:
-        An enclosed mask with the same shape. 
-        The mask has a value of 1 inside the 
-        enclosed area and 0 elsewhere.
-        """
-        y, x = np.indices(shape)
-        coordinates = np.column_stack((x.flatten(), y.flatten()))
-        mask = Path(points).contains_points(coordinates).reshape(shape)
-        return mask
-    
     def mask_changed(self):
         self.parent.points = np.asarray([[self.mapSceneToParent(p[1]).x(), 
                                           self.mapSceneToParent(p[1]).y()] \
                                          for p in super().getSceneHandlePositions()])
-        self.parent.mask = self.create_enclosed_mask(self.parent.points, 
-                                                     self.parent.shape)
+        self.parent.mask = create_enclosed_mask(self.parent.points, 
+                                                self.parent.shape)
 
 
 class ClickableEditableLabeledMask:
@@ -109,10 +117,7 @@ class ClickableEditableLabeledMask:
         self.imv = imv
         self.opacity = opacity
         self.clickable = clickable
-        self.points = get_ordered_mask_points(get_edges(mask), 
-                                              max_points=20)
-        # Reverse points to match row-major order
-        self.points = np.flip(self.points, axis=1)
+        self.points = get_mask_points(get_edges(mask))
 
         self.idx = 0
         self.possible_labels = possible_labels
@@ -195,6 +200,7 @@ class ImageGrid(QWidget):
         self.min_mask_area = min_mask_area
         self.possible_labels = possible_labels
         self.colors = colors
+        self.freestyle_mode = False
 
         self.init_data()
         self.init_UI()
@@ -268,6 +274,7 @@ class ImageGrid(QWidget):
                                                 len(self.snaps_folders),
                                                 self.image_shape[1], 
                                                 self.image_shape[2]))
+        self.draw_val = np.max(self.sorted_data) + 2
         self.masks = np.reshape(self.masks, (self.sorted_data.shape[:3]))
         if self.rois is not None:
             self.rois = np.reshape(self.rois, (*self.sorted_data.shape[:3], 4))
@@ -336,15 +343,6 @@ class ImageGrid(QWidget):
         self.left_shortcut.activated.connect(self.prev_window)
         self.right_shortcut.activated.connect(self.next_window)
 
-        # Add button to toggle showing masks
-        self.B_toggle_masks = QPushButton("Toggle masks (q)", self.window)
-        self.B_toggle_masks.clicked.connect(self.toggle_masks)
-        layout.addWidget(self.B_toggle_masks, i+2, 1)
-
-        # q key shortcut to toggle masks
-        self.q_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Q), self.window)
-        self.q_shortcut.activated.connect(self.toggle_masks)
-
         # Add a button to toggle editable masks
         self.B_toggle_editable = QPushButton("Toggle editable (e)", self.window)
         self.B_toggle_editable.clicked.connect(self.toggle_editable)
@@ -354,11 +352,25 @@ class ImageGrid(QWidget):
         self.e_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_E), self.window)
         self.e_shortcut.activated.connect(self.toggle_editable)
 
+        # Add button to toggle showing masks
+        self.B_toggle_masks = QPushButton("Toggle masks (q)", self.window)
+        self.B_toggle_masks.clicked.connect(self.toggle_masks)
+        layout.addWidget(self.B_toggle_masks, i+2, 1)
+
+        # q key shortcut to toggle masks
+        self.q_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Q), self.window)
+        self.q_shortcut.activated.connect(self.toggle_masks)
+
+        # Add a button to freestyle draw masks
+        self.B_freestyle = QPushButton("Draw masks", self.window)
+        self.B_freestyle.clicked.connect(self.freestyle)
+        layout.addWidget(self.B_freestyle, i+2, 2)
+
         # Add a button to finish and apply masks
-        self.B_toggle_editable = QPushButton("Apply masks", self.window)
-        self.B_toggle_editable.clicked.connect(self.finish)
-        layout.addWidget(self.B_toggle_editable, i+2, 3)
-        
+        self.B_apply_masks = QPushButton("Apply masks", self.window)
+        self.B_apply_masks.clicked.connect(self.finish)
+        layout.addWidget(self.B_apply_masks, i+2, 3)
+
         # Populate image views
         self.update_window()
         self.add_masks()
@@ -422,6 +434,45 @@ class ImageGrid(QWidget):
             for mask_item in self.masks[self.window_idx, i, j]:
                 mask_item.remove_from_imv()
     
+    def freestyle(self):
+        #im = self.sorted_data[self.window_idx, 0, 0, self.channel_idx].copy()
+        # Start freestyle mode by enabling drawing on all ImageViews
+        if not self.freestyle_mode:
+            self.freestyle_mode = True
+            kernel = np.array([[self.draw_val]])
+            for i, j in np.ndindex(self.image_views.shape):
+                self.image_views[i, j].imageItem.setDrawKernel(kernel=kernel, 
+                mask=None, center=(0,0))
+            self.B_freestyle.setText("Finish freestyle")
+        # End freestyle mode by creating a mask from the drawn points
+        else:
+            self.freestyle_mode = False
+            for i, j in np.ndindex(self.image_views.shape):
+                im = self.sorted_data[self.window_idx, i, j, self.channel_idx].copy() 
+                self.image_views[i, j].imageItem.setDrawKernel(kernel=None,
+                    mask=None, center=None)
+                mask = (im == self.draw_val)
+            ###
+            # need to catch no points passed here
+            ###
+
+            # Get points, reverse to match row-major order
+                try:
+                    free_points = get_mask_points(mask)
+                    enclosed_mask = create_enclosed_mask(free_points, im.shape)
+                    ma = ClickableEditableLabeledMask(enclosed_mask,
+                                                      opacity=self.opacity,
+                                                      possible_labels=self.possible_labels,
+                                                      colors=self.colors)
+        
+                    self.masks[self.window_idx, i, j].append(ma)
+                except IndexError:
+                    continue
+            
+            self.add_masks()
+            self.draw_val += 2
+            self.B_freestyle.setText("Freestyle")
+
     def update_window(self):
         """Update the current window."""
         # Make sure window index is valid
@@ -457,7 +508,7 @@ class ImageGrid(QWidget):
                                                 pen='r')
             else:
                 self.roi_views[i, j].setData(x=[], y=[], pen='r')
-    
+        
     def mask_summary_plot(self):
         """Make a summary plot of the masks. This code was adapted
         from quot: https://github.com/alecheckert/quot"""
@@ -468,6 +519,7 @@ class ImageGrid(QWidget):
         # Not implemented yet for masks outside ROI or if no ROIs are provided.
         if self.rois is None:
             pass
+
         # Make sure output folders exist
         output_folders = ['masked_trajs', 'mask_plots', 'mask_measurements']
         for folder in output_folders:
@@ -563,7 +615,7 @@ class ImageGrid(QWidget):
                 axs[0, 0].set_title("Masked image")
                 axs[0, 1].set_title("Mask definitions")
                 axs[1, 0].set_title("Localization density")
-                axs[1, 1].set_title("Inside/outside")
+                axs[1, 1].set_title("Trajs inside/outside")
 
                 for ax in axs.flatten():
                     ax.axis('off')
