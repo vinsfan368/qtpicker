@@ -458,12 +458,8 @@ class ImageGrid(QWidget):
                 self.image_views[i, j].imageItem.setDrawKernel(kernel=None,
                     mask=None, center=None)
                 mask = (im == self.draw_val)
-            ###
-            # need to catch no points passed here
-            ###
-
-            # Get points, reverse to match row-major order
                 try:
+                    # Get points, initialize a new mask and add to list
                     free_points = get_mask_points(mask)
                     enclosed_mask = create_enclosed_mask(free_points, im.shape)
                     ma = ClickableEditableLabeledMask(enclosed_mask,
@@ -473,6 +469,7 @@ class ImageGrid(QWidget):
                                                       clickable=(not self.editable))
         
                     self.masks[self.window_idx, i, j].append(ma)
+                # If there are no points in an ImageItem, skip
                 except IndexError:
                     continue
             
@@ -667,7 +664,7 @@ class ImageGrid(QWidget):
 
 
 if __name__ == '__main__':
-    path = str(input("Drag automation parent folder: ").strip())
+    path = str(input("Drag automation output folder: ").strip())
     if not os.path.isdir(path) and os.name == 'posix':
         path = path.replace("\\ ", " ")
     if not os.path.isdir(path):
