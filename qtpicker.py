@@ -566,8 +566,7 @@ class ImageGrid(QWidget):
     def finish(self):
         """Save and apply masks."""
         # Not implemented yet for masks outside ROI or if no ROIs are provided.
-        if self.rois is None:
-            pass
+        assert self.rois is not None, "No ROIs provided, cannot apply masks."
 
         # Make sure output folders exist
         output_folders = ['masked_trajs', 'mask_plots', 'mask_measurements']
@@ -575,11 +574,9 @@ class ImageGrid(QWidget):
             if not os.path.exists(os.path.join(self.path, folder)):
                 os.makedirs(os.path.join(self.path, folder))
 
-        masks_flat = self.masks.flatten()    
-        rois = np.reshape(self.rois, (*masks_flat.shape, 4))
         # Save masks
-        for (i,), masks in tqdm(np.ndenumerate(masks_flat), 
-                                total=masks_flat.shape[0]):
+        for (i,), masks in tqdm(np.ndenumerate(self.masks), 
+                                total=self.masks.shape[0]):
             # Get trajs.csv file,  make sure it exists
             trajs_csv = os.path.join(self.path, 'tracking', f"{i+1}.csv")
             if not os.path.isfile(trajs_csv):
@@ -592,7 +589,8 @@ class ImageGrid(QWidget):
                 continue
             # Apply masks and save; points need 
             # to be flipped to match row-major order
-            point_sets = [np.flip(mask.points - [rois[i, 0], rois[i, 1]], axis=1) 
+            point_sets = [np.flip(mask.points - [self.rois[i, 0], self.rois[i, 1]], 
+                                  axis=1) 
                           for mask in valid_masks]
             trajs = pd.read_csv(trajs_csv)
             trajs['mask_index'] = apply_masks(point_sets, 
@@ -601,8 +599,8 @@ class ImageGrid(QWidget):
             out_path = os.path.splitext(trajs_csv)[0] + "_trajs.csv"
             trajs.to_csv(out_path, index=False)
             if self.save_mask_png:
-                x_max = rois[i, 2] - rois[i, 0]
-                y_max = rois[i, 3] - rois[i, 1]
+                x_max = self.rois[i, 2] - self.rois[i, 0]
+                y_max = self.rois[i, 3] - self.rois[i, 1]
                 trajs = trajs[trajs["error_flag"] == 0.0]
                 Y, X = np.indices((y_max, x_max))
                 YX = np.asarray([Y.ravel(), X.ravel()]).T
@@ -617,7 +615,7 @@ class ImageGrid(QWidget):
                 y_bins = np.arange(y_max+1)
                 x_bins = np.arange(x_max+1)
                 H, _, _ = np.histogram2d(trajs['y'], trajs['x'], bins=(y_bins, x_bins))
-                H = ndimage.gaussian_filter(H, 5.0)
+                H = ndimage.gaussian_filter(H, 3.0)
 
                 # The set of points to use for the scatter plot
                 L = np.asarray(trajs[["y", "x", "mask_index"]])
@@ -703,6 +701,7 @@ class ImageGrid(QWidget):
                                f"{i+1}_masks.csv")
             mask_df.to_csv(out, index=False)
 
+        # TODO: FIGURE OUT HOW TO SAVE IMAGEGRID
         # Save ImageGrid as pickle
         #with open(os.path.join(self.path, 'ImageGrid.pkl'), 'wb') as fh:
         #    pickle.dump(self, fh)
