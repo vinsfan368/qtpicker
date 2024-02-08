@@ -218,21 +218,16 @@ class ImageGrid(QWidget):
         self.snaps_folders = sorted(glob(os.path.join(self.path, "snaps2*")))
         self.snaps = glob(os.path.join(self.snaps_folders[0], "*.tif*"))
         self.n_snaps = len(self.snaps)
-        #self.n_windows = int(np.ceil(self.n_snaps / (self.grid_shape[0] * self.grid_shape[1])))
-        #self.image_shape = ImageReader(self.snaps[0]).shape
-        #self.sorted_data = np.zeros((self.n_windows * self.grid_shape[0] * self.grid_shape[1],
-        #                             len(self.snaps_folders),
-        #                             self.image_shape[1],
-        #                             self.image_shape[2]))
-        self.masks = np.ndarray(shape=self.n_snaps, dtype=object)
+        self.n_windows = int(np.ceil(self.n_snaps / self.n_images_displayed))
+        self.masks = np.ndarray(shape=self.n_windows * self.n_images_displayed, 
+                                dtype=object)
         self.masks.fill([])
+        print(self.masks.shape)
 
         if os.path.exists(os.path.join(self.path, 'rois.txt')):
             self.rois = np.loadtxt(os.path.join(self.path, "rois.txt"), 
                                    delimiter=',', 
                                    dtype=int)
-            #pad = self.sorted_data.shape[0] - self.rois.shape[0]
-            #self.rois = np.pad(self.rois, ((0, pad), (0, 0)))
         else:
             self.rois = None
             print("Warning: no ROIs found. No masks will be applied to this dataset.")
@@ -242,9 +237,8 @@ class ImageGrid(QWidget):
                                                  self.n_snaps),
                                        fill_value=np.nan, 
                                        dtype=object)
-        for i, folder in enumerate(tqdm(self.snaps_folders, 
-                                        "Loading images and masks")):
-            for j in range(self.n_snaps):
+        for j in tqdm(range(self.n_snaps), "Loading images and masks"):
+            for i, folder in enumerate(self.snaps_folders):
                 # Load image into array
                 filename = os.path.join(folder, f"{j+1}.tif")
                 if os.path.exists(filename):
@@ -275,19 +269,6 @@ class ImageGrid(QWidget):
                                                                   possible_labels=self.possible_labels,
                                                                   colors=self.colors) \
                                     for v in ma_indices]
-
-        """# Reshape everything to (n_windows, grid_shape[0], grid_shape[1], ...)
-        self.sorted_data = np.reshape(self.sorted_data, 
-                                      newshape=(self.n_windows, 
-                                                self.grid_shape[0], 
-                                                self.grid_shape[1],
-                                                len(self.snaps_folders),
-                                                self.image_shape[1], 
-                                                self.image_shape[2]))
-        self.draw_val = np.max(self.sorted_data) + 2
-        self.masks = np.reshape(self.masks, (self.sorted_data.shape[:3]))
-        if self.rois is not None:
-            self.rois = np.reshape(self.rois, (*self.sorted_data.shape[:3], 4))"""
     
     def init_UI(self):
         """Initialize the user interface."""
@@ -295,7 +276,6 @@ class ImageGrid(QWidget):
         self.layout = QGridLayout(self.window)
         
         self.window_idx = 0
-        self.n_windows = int(np.ceil(self.n_snaps / self.n_images_displayed))
         self.channel_idx = 0
         self.n_channels = len(self.snaps_folders)
         self.image_views = np.zeros((self.grid_shape[0], self.grid_shape[1]), 
@@ -451,40 +431,38 @@ class ImageGrid(QWidget):
         self.edit_mode = not self.edit_mode
         if not self.masks_shown:
             self.toggle_masks()
-        """for i, j in np.ndindex(self.image_views.shape):
-            for mask_item in self.masks[self.window_idx, i, j]:
-                mask_item.toggle_editable()"""
-        """for masks in self.masks[self.curr_indices]:
-            for ma in masks:
-                ma.toggle_editable()"""
         for i, j in np.ndindex(self.image_views.shape):
             curr_idx = i * self.grid_shape[1] + j
-            for ma in self.masks[self.curr_indices[curr_idx]]:
-                ma.toggle_editable()
+            try:
+                for ma in self.masks[self.curr_indices[curr_idx]]:
+                    ma.toggle_editable()
+            except IndexError:
+                continue
             
     def add_masks(self):
         """Add the masks to their respective ImageViews."""
-        """for i, j in np.ndindex(self.image_views.shape):
-            for mask_item in self.masks[self.window_idx, i, j]:
-                mask_item.add_to_imv(self.image_views[i, j])"""
-        """for masks in self.masks[self.curr_indices]:
-            for ma in masks:
-                ma.add_to_imv()"""
         for i, j in np.ndindex(self.image_views.shape):
             curr_idx = i * self.grid_shape[1] + j
-            for ma in self.masks[self.curr_indices[curr_idx]]:
-                ma.add_to_imv(self.image_views[i, j])
+            try:
+                for ma in self.masks[self.curr_indices[curr_idx]]:
+                    # Toggle if there's a mismatch between edit 
+                    # mode and the mask's editability
+                    if ma.clickable == self.edit_mode:
+                        ma.toggle_editable()
+                    ma.add_to_imv(self.image_views[i, j])
+            except IndexError:
+                continue
     
     def remove_masks(self):
         """Remove masks from their respective ImageViews."""
-        """for i, j in np.ndindex(self.image_views.shape):
-            for mask_item in self.masks[self.window_idx, i, j]:
-                mask_item.remove_from_imv()"""
         for i, j in np.ndindex(self.image_views.shape):
             curr_idx = i * self.grid_shape[1] + j
-            for ma in self.masks[self.curr_indices[curr_idx]]:
-                ma.remove_from_imv()
-    
+            try:
+                for ma in self.masks[self.curr_indices[curr_idx]]:
+                    ma.remove_from_imv()
+            except IndexError:
+                continue
+
     def freestyle(self):
         # Start freestyle mode by enabling drawing on all ImageViews
         if not self.freestyle_mode:
@@ -549,13 +527,19 @@ class ImageGrid(QWidget):
         # Get new images
         self.curr_indices = np.arange(self.window_idx * self.n_images_displayed,
                                       (self.window_idx+1) * self.n_images_displayed)
+        self.curr_indices = self.curr_indices[self.curr_indices < self.n_snaps]
         curr_paths = list(self.snaps_filepaths[self.channel_idx, self.curr_indices])
-        print(self.curr_indices, curr_paths, sep='\n\n')
         self.curr_images = tifffile.imread(curr_paths)
-                
+        if len(self.curr_images.shape) < 3:
+            self.curr_images = np.expand_dims(self.curr_images, axis=0)
         # Update image views
         for i, j in np.ndindex(self.image_views.shape):
             curr_idx = i * self.grid_shape[1] + j
+            if curr_idx >= len(self.curr_indices):
+                self.image_views[i, j].setImage(np.zeros((10, 10)))
+                self.roi_views[i, j].setData(x=[], y=[], pen='r')
+                continue
+
             self.image_views[i, j].setImage(self.curr_images[curr_idx])
             
             # Add ROI as a red box
