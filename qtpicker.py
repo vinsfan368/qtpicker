@@ -37,6 +37,8 @@ from tqdm import tqdm
 # Pickle
 import pickle
 
+import tifffile
+
 
 def create_enclosed_mask(points, shape):
     """
@@ -93,7 +95,6 @@ class EditableMask(PolyLineROI):
         super().__init__(parent.points, closed=True)
         self.parent = parent
         self.sigRegionChanged.connect(self.mask_changed)
-
 
     def mask_changed(self):
         self.parent.points = np.asarray([[self.mapSceneToParent(p[1]).x(), 
@@ -157,7 +158,10 @@ class ClickableEditableLabeledMask:
         if not self.clickable:
             self.clickable_mask = ClickableMask(self)
         self.clickable = not self.clickable
-        self.add_to_imv()
+
+        # TODO: Catch QGraphicsScene::removeItem: item 0x16c36f510's scene (0x0) is different from this scene (0x15f7e2d50)
+        if self.curr_label != 'bad' or self.clickable:
+            self.add_to_imv()
     
     def cycle_label(self):
         self.remove_from_imv()
@@ -193,6 +197,7 @@ class ImageGrid(QWidget):
         super(ImageGrid, self).__init__(parent=parent)
         self.path = path
         self.grid_shape = shape
+        self.n_images_displayed = shape[0] * shape[1]
         self.save_mask_png = save_mask_png
         self.show_hists = show_image_histogram
         self.roi_masks_only = roi_masks_only
@@ -201,7 +206,8 @@ class ImageGrid(QWidget):
         self.possible_labels = possible_labels
         self.colors = colors
         self.freestyle_mode = False
-        self.editable = False
+        self.edit_mode = False
+        self.masks_shown = True
 
         self.init_data()
         self.init_UI()
@@ -209,65 +215,68 @@ class ImageGrid(QWidget):
     def init_data(self):
         """Read in masks and images, match them up to each other, and
         coerce them into an array to be displayed in the GUI."""
-        self.snaps_folders = glob(os.path.join(self.path, "snaps2*"))
-        self.snaps_folders.sort()
-
+        self.snaps_folders = sorted(glob(os.path.join(self.path, "snaps2*")))
         self.snaps = glob(os.path.join(self.snaps_folders[0], "*.tif*"))
         self.n_snaps = len(self.snaps)
-        self.n_windows = int(np.ceil(self.n_snaps / (self.grid_shape[0] * self.grid_shape[1])))
-        self.image_shape = ImageReader(self.snaps[0]).shape
-        self.sorted_data = np.zeros((self.n_windows * self.grid_shape[0] * self.grid_shape[1],
-                                     len(self.snaps_folders),
-                                     self.image_shape[1],
-                                     self.image_shape[2]))
-        self.masks = np.ndarray(shape=self.sorted_data.shape[0], dtype=object)
+        #self.n_windows = int(np.ceil(self.n_snaps / (self.grid_shape[0] * self.grid_shape[1])))
+        #self.image_shape = ImageReader(self.snaps[0]).shape
+        #self.sorted_data = np.zeros((self.n_windows * self.grid_shape[0] * self.grid_shape[1],
+        #                             len(self.snaps_folders),
+        #                             self.image_shape[1],
+        #                             self.image_shape[2]))
+        self.masks = np.ndarray(shape=self.n_snaps, dtype=object)
         self.masks.fill([])
 
         if os.path.exists(os.path.join(self.path, 'rois.txt')):
             self.rois = np.loadtxt(os.path.join(self.path, "rois.txt"), 
                                    delimiter=',', 
                                    dtype=int)
-            pad = self.sorted_data.shape[0] - self.rois.shape[0]
-            self.rois = np.pad(self.rois, ((0, pad), (0, 0)))
+            #pad = self.sorted_data.shape[0] - self.rois.shape[0]
+            #self.rois = np.pad(self.rois, ((0, pad), (0, 0)))
         else:
             self.rois = None
+            print("Warning: no ROIs found. No masks will be applied to this dataset.")
 
-        # Loop over snap images, snap folders
-        for i in tqdm(range(self.n_snaps), "Loading images and masks"):
-            for j, folder in enumerate(self.snaps_folders):
+        # Loop over snap images, snap folders to populate filepaths
+        self.snaps_filepaths = np.full(shape=(len(self.snaps_folders), 
+                                                 self.n_snaps),
+                                       fill_value=np.nan, 
+                                       dtype=object)
+        for i, folder in enumerate(tqdm(self.snaps_folders, 
+                                        "Loading images and masks")):
+            for j in range(self.n_snaps):
                 # Load image into array
-                filename = os.path.join(folder, f"{i+1}.tif")
+                filename = os.path.join(folder, f"{j+1}.tif")
                 if os.path.exists(filename):
-                    self.sorted_data[i, j] = ImageReader(filename).get_frame(0)
+                    self.snaps_filepaths[i, j] = filename
 
-            # Get mask corresponding to this image and read in
-            mask_filename = os.path.join(self.path, "masks", f"{i+1}.csv")
-            if os.path.exists(mask_filename):
-                # Load mask from CSV
-                mask = np.loadtxt(mask_filename, delimiter=',')
+                # Get mask corresponding to this image and read in
+                mask_filename = os.path.join(self.path, "masks", f"{j+1}.csv")
+                if os.path.exists(mask_filename):
+                    # Load mask from CSV
+                    mask = np.loadtxt(mask_filename, delimiter=',')
 
-                # Only look at masks inside ROI if specified
-                if self.roi_masks_only and self.rois is not None:
-                    # Get ROI for this image
-                    roi = self.rois[i]
-                    # Crop mask to ROI
-                    crop = mask[roi[1]:roi[3], roi[0]:roi[2]]
-                    # Get only unique indices within the ROI
-                    idx, counts = np.unique(crop[crop > 0], return_counts=True)
-                else:
-                    # Else get all unique indices in the mask
-                    idx, counts = np.unique(mask[mask > 0], return_counts=True)
-                
-                ma_indices = idx[counts > self.min_mask_area]
-                    
-                # Create a mask for each non-zero value
-                self.masks[i] = [ClickableEditableLabeledMask(mask == v, 
-                                                              opacity=self.opacity,
-                                                              possible_labels=self.possible_labels,
-                                                              colors=self.colors) \
-                                 for v in ma_indices]
+                    # Only look at masks inside ROI if specified
+                    if self.roi_masks_only and self.rois is not None:
+                        # Get ROI for this image
+                        roi = self.rois[j]
+                        # Crop mask to ROI
+                        crop = mask[roi[0]:roi[2], roi[1]:roi[3]]
+                        # Get only unique indices within the ROI
+                        idx, counts = np.unique(crop[crop > 0], return_counts=True)
+                    else:
+                        # Else get all unique indices in the mask
+                        idx, counts = np.unique(mask[mask > 0], return_counts=True)
+                        
+                    # Create a mask for each non-zero value if over min area
+                    ma_indices = idx[counts > self.min_mask_area]
+                    self.masks[j] = [ClickableEditableLabeledMask(mask == v, 
+                                                                  opacity=self.opacity,
+                                                                  possible_labels=self.possible_labels,
+                                                                  colors=self.colors) \
+                                    for v in ma_indices]
 
-        # Reshape everything to (n_windows, grid_shape[0], grid_shape[1], ...)
+        """# Reshape everything to (n_windows, grid_shape[0], grid_shape[1], ...)
         self.sorted_data = np.reshape(self.sorted_data, 
                                       newshape=(self.n_windows, 
                                                 self.grid_shape[0], 
@@ -278,16 +287,16 @@ class ImageGrid(QWidget):
         self.draw_val = np.max(self.sorted_data) + 2
         self.masks = np.reshape(self.masks, (self.sorted_data.shape[:3]))
         if self.rois is not None:
-            self.rois = np.reshape(self.rois, (*self.sorted_data.shape[:3], 4))
+            self.rois = np.reshape(self.rois, (*self.sorted_data.shape[:3], 4))"""
     
     def init_UI(self):
         """Initialize the user interface."""
         self.window = QWidget()
-        layout = QGridLayout(self.window)
+        self.layout = QGridLayout(self.window)
         
         self.window_idx = 0
+        self.n_windows = int(np.ceil(self.n_snaps / self.n_images_displayed))
         self.channel_idx = 0
-        self.masks_shown = True
         self.n_channels = len(self.snaps_folders)
         self.image_views = np.zeros((self.grid_shape[0], self.grid_shape[1]), 
                                     dtype=object)
@@ -296,7 +305,7 @@ class ImageGrid(QWidget):
         for i, j in np.ndindex(self.image_views.shape):
             # Make image views
             self.image_views[i, j] = ImageView(parent=self.window)
-            layout.addWidget(self.image_views[i, j], i, j)
+            self.layout.addWidget(self.image_views[i, j], i, j)
 
             # Hide buttons            
             self.image_views[i, j].ui.roiBtn.hide()
@@ -307,47 +316,37 @@ class ImageGrid(QWidget):
             # Add ROI objects
             self.roi_views[i, j] = PlotDataItem(x=[], y=[])
             self.image_views[i, j].addItem(self.roi_views[i, j])
-
-        # Add buttons to go through channels
+                # Add buttons to go through channels
+        
         self.B_next_chan = QPushButton("Next channel (w, ↑)", self.window)
         self.B_prev_chan = QPushButton("Previous channel (s, ↓)", self.window)
-        self.B_next_chan.clicked.connect(self.next_channel)
-        self.B_prev_chan.clicked.connect(self.prev_channel)
-        layout.addWidget(self.B_next_chan, i+1, 0)
-        layout.addWidget(self.B_prev_chan, i+1, 1)
+        self.layout.addWidget(self.B_next_chan, i+1, 0)
+        self.layout.addWidget(self.B_prev_chan, i+1, 1)
 
         # w shortcut to go to next channel, s to go to previous
         self.w_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_W), self.window)
         self.s_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_S), self.window)
         self.down_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Down), self.window)
         self.up_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Up), self.window)
-        self.w_shortcut.activated.connect(self.next_channel)
-        self.s_shortcut.activated.connect(self.prev_channel)
-        self.down_shortcut.activated.connect(self.next_channel)
-        self.up_shortcut.activated.connect(self.prev_channel)
         
         # Add buttons to advance windows
         self.B_prev = QPushButton("Previous window (a, ←)", self.window)
         self.B_next = QPushButton("Next window (d, →)", self.window)
-        self.B_prev.clicked.connect(self.prev_window)
-        self.B_next.clicked.connect(self.next_window)
-        layout.addWidget(self.B_prev, i+1, 2)
-        layout.addWidget(self.B_next, i+1, 3)
+        self.layout.addWidget(self.B_prev, i+1, 2)
+        self.layout.addWidget(self.B_next, i+1, 3)
 
         # a and d key shortcuts to advance windows
         self.a_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_A), self.window)
         self.d_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_D), self.window)
         self.left_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Left), self.window)
         self.right_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Right), self.window)
-        self.a_shortcut.activated.connect(self.prev_window)
-        self.d_shortcut.activated.connect(self.next_window)
-        self.left_shortcut.activated.connect(self.prev_window)
-        self.right_shortcut.activated.connect(self.next_window)
+
+        self.connect_navigation_buttons_shortcuts()
 
         # Add a button to toggle editable masks
         self.B_toggle_editable = QPushButton("Toggle editable (e)", self.window)
         self.B_toggle_editable.clicked.connect(self.toggle_editable)
-        layout.addWidget(self.B_toggle_editable, i+2, 0)
+        self.layout.addWidget(self.B_toggle_editable, i+2, 0)
 
         # e key shortcut to toggle editable masks
         self.e_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_E), self.window)
@@ -356,7 +355,7 @@ class ImageGrid(QWidget):
         # Add button to toggle showing masks
         self.B_toggle_masks = QPushButton("Toggle masks (q)", self.window)
         self.B_toggle_masks.clicked.connect(self.toggle_masks)
-        layout.addWidget(self.B_toggle_masks, i+2, 1)
+        self.layout.addWidget(self.B_toggle_masks, i+2, 1)
 
         # q key shortcut to toggle masks
         self.q_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Q), self.window)
@@ -365,7 +364,7 @@ class ImageGrid(QWidget):
         # Add a button to freestyle draw masks
         self.B_freestyle = QPushButton("Draw masks (r)", self.window)
         self.B_freestyle.clicked.connect(self.freestyle)
-        layout.addWidget(self.B_freestyle, i+2, 2)
+        self.layout.addWidget(self.B_freestyle, i+2, 2)
 
         # r shortcut to draw masks
         self.r_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_R), self.window)
@@ -374,16 +373,44 @@ class ImageGrid(QWidget):
         # Add a button to finish and apply masks
         self.B_apply_masks = QPushButton("Apply masks", self.window)
         self.B_apply_masks.clicked.connect(self.finish)
-        layout.addWidget(self.B_apply_masks, i+2, 3)
+        self.layout.addWidget(self.B_apply_masks, i+2, 3)
 
         # Populate image views
         self.update_window()
         self.add_masks()
 
-        # Resize main window
+        # Resize main window and show
         self.window.resize(1280, 720)
-        self.window.show()
+        self.window.show()        
+
+    def connect_navigation_buttons_shortcuts(self):
+        self.B_next_chan.clicked.connect(self.next_channel)
+        self.B_prev_chan.clicked.connect(self.prev_channel)
+        self.w_shortcut.activated.connect(self.next_channel)
+        self.s_shortcut.activated.connect(self.prev_channel)
+        self.down_shortcut.activated.connect(self.next_channel)
+        self.up_shortcut.activated.connect(self.prev_channel)
+        self.B_prev.clicked.connect(self.prev_window)
+        self.B_next.clicked.connect(self.next_window)
+        self.a_shortcut.activated.connect(self.prev_window)
+        self.d_shortcut.activated.connect(self.next_window)
+        self.left_shortcut.activated.connect(self.prev_window)
+        self.right_shortcut.activated.connect(self.next_window)
     
+    def disconnect_navigation_buttons_shortcuts(self):
+        self.B_next_chan.clicked.disconnect(self.next_channel)
+        self.B_prev_chan.clicked.disconnect(self.prev_channel)
+        self.w_shortcut.activated.disconnect(self.next_channel)
+        self.s_shortcut.activated.disconnect(self.prev_channel)
+        self.down_shortcut.activated.disconnect(self.next_channel)
+        self.up_shortcut.activated.disconnect(self.prev_channel)
+        self.B_prev.clicked.disconnect(self.prev_window)
+        self.B_next.clicked.disconnect(self.next_window)
+        self.a_shortcut.activated.disconnect(self.prev_window)
+        self.d_shortcut.activated.disconnect(self.next_window)
+        self.left_shortcut.activated.disconnect(self.prev_window)
+        self.right_shortcut.activated.disconnect(self.next_window)
+
     def next_channel(self):
         self.channel_idx = (self.channel_idx + 1) % self.n_channels
         self.update_window()
@@ -421,61 +448,83 @@ class ImageGrid(QWidget):
         self.masks_shown = not self.masks_shown
     
     def toggle_editable(self):
-        self.editable = not self.editable
+        self.edit_mode = not self.edit_mode
         if not self.masks_shown:
             self.toggle_masks()
-        for i, j in np.ndindex(self.image_views.shape):
+        """for i, j in np.ndindex(self.image_views.shape):
             for mask_item in self.masks[self.window_idx, i, j]:
-                mask_item.toggle_editable()
+                mask_item.toggle_editable()"""
+        """for masks in self.masks[self.curr_indices]:
+            for ma in masks:
+                ma.toggle_editable()"""
+        for i, j in np.ndindex(self.image_views.shape):
+            curr_idx = i * self.grid_shape[1] + j
+            for ma in self.masks[self.curr_indices[curr_idx]]:
+                ma.toggle_editable()
             
     def add_masks(self):
         """Add the masks to their respective ImageViews."""
-        for i, j in np.ndindex(self.image_views.shape):
+        """for i, j in np.ndindex(self.image_views.shape):
             for mask_item in self.masks[self.window_idx, i, j]:
-                mask_item.add_to_imv(self.image_views[i, j])
+                mask_item.add_to_imv(self.image_views[i, j])"""
+        """for masks in self.masks[self.curr_indices]:
+            for ma in masks:
+                ma.add_to_imv()"""
+        for i, j in np.ndindex(self.image_views.shape):
+            curr_idx = i * self.grid_shape[1] + j
+            for ma in self.masks[self.curr_indices[curr_idx]]:
+                ma.add_to_imv(self.image_views[i, j])
     
     def remove_masks(self):
         """Remove masks from their respective ImageViews."""
-        for i, j in np.ndindex(self.image_views.shape):
+        """for i, j in np.ndindex(self.image_views.shape):
             for mask_item in self.masks[self.window_idx, i, j]:
-                mask_item.remove_from_imv()
+                mask_item.remove_from_imv()"""
+        for i, j in np.ndindex(self.image_views.shape):
+            curr_idx = i * self.grid_shape[1] + j
+            for ma in self.masks[self.curr_indices[curr_idx]]:
+                ma.remove_from_imv()
     
     def freestyle(self):
-        #im = self.sorted_data[self.window_idx, 0, 0, self.channel_idx].copy()
         # Start freestyle mode by enabling drawing on all ImageViews
         if not self.freestyle_mode:
             self.freestyle_mode = True
+            self.disconnect_navigation_buttons_shortcuts()  # Prevent navigation
+            self.draw_val = int(np.max(self.curr_images) + 2)
             kernel = np.array([[self.draw_val]])
             for i, j in np.ndindex(self.image_views.shape):
                 self.image_views[i, j].imageItem.setDrawKernel(kernel=kernel, 
                 mask=None, center=(0,0))
             self.B_freestyle.setText("Finish drawing (r)")
+
         # End freestyle mode by creating a mask from the drawn points
         else:
             self.freestyle_mode = False
+            self.connect_navigation_buttons_shortcuts()
             for i, j in np.ndindex(self.image_views.shape):
-                im = self.sorted_data[self.window_idx, i, j, self.channel_idx].copy() 
                 self.image_views[i, j].imageItem.setDrawKernel(kernel=None,
                     mask=None, center=None)
+                
+                # Get points drawn
+                im = self.image_views[i, j].imageItem.image
                 mask = (im == self.draw_val)
-            ###
-            # need to catch no points passed here
-            ###
-
-            # Get points, reverse to match row-major order
+            # TODO: another catch for no points passed?
+            # Get points
                 try:
-                    free_points = get_mask_points(mask)
-                    enclosed_mask = create_enclosed_mask(free_points, im.shape)
+                    points = get_mask_points(mask)
+                    enclosed_mask = create_enclosed_mask(points, im.shape)
                     ma = ClickableEditableLabeledMask(enclosed_mask,
                                                       opacity=self.opacity,
                                                       possible_labels=self.possible_labels,
                                                       colors=self.colors,
-                                                      clickable=(not self.editable))
-        
-                    self.masks[self.window_idx, i, j].append(ma)
+                                                      clickable=(not self.edit_mode))
+                    curr_idx = i * self.grid_shape[1] + j
+                    self.masks[self.curr_indices[curr_idx]].append(ma)
                 except IndexError:
                     continue
-            
+            self.update_window()
+            if not self.masks_shown:
+                self.toggle_masks()
             self.add_masks()
             self.draw_val += 2
             self.B_freestyle.setText("Draw masks (r)")
@@ -490,28 +539,37 @@ class ImageGrid(QWidget):
         
         # Make sure channel index is valid
         self.channel_idx = self.channel_idx % self.n_channels
-        self.window.setWindowTitle("Cells {} to {}, channel {}"\
-                                   .format(self.window_idx*self.grid_shape[0]*self.grid_shape[1]+1, 
-                                           (self.window_idx+1)*self.grid_shape[0]*self.grid_shape[1], 
+
+        # Set title
+        self.window.setWindowTitle("Cells {} to {}, channel {}" \
+                                   .format(self.window_idx * self.n_images_displayed+1, 
+                                           (self.window_idx+1) * self.n_images_displayed, 
                                            os.path.basename(self.snaps_folders[self.channel_idx])))
+
+        # Get new images
+        self.curr_indices = np.arange(self.window_idx * self.n_images_displayed,
+                                      (self.window_idx+1) * self.n_images_displayed)
+        curr_paths = list(self.snaps_filepaths[self.channel_idx, self.curr_indices])
+        print(self.curr_indices, curr_paths, sep='\n\n')
+        self.curr_images = tifffile.imread(curr_paths)
+                
+        # Update image views
         for i, j in np.ndindex(self.image_views.shape):
-            self.image_views[i, j].setImage(self.sorted_data[self.window_idx, 
-                                                             i, 
-                                                             j, 
-                                                             self.channel_idx])
+            curr_idx = i * self.grid_shape[1] + j
+            self.image_views[i, j].setImage(self.curr_images[curr_idx])
             
             # Add ROI as a red box
             if self.rois is not None:
-                self.roi_views[i, j].setData(x=[self.rois[self.window_idx, i, j, 0],
-                                                self.rois[self.window_idx, i, j, 0],
-                                                self.rois[self.window_idx, i, j, 2],
-                                                self.rois[self.window_idx, i, j, 2],
-                                                self.rois[self.window_idx, i, j, 0]],
-                                             y=[self.rois[self.window_idx, i, j, 1],
-                                                self.rois[self.window_idx, i, j, 3],
-                                                self.rois[self.window_idx, i, j, 3],
-                                                self.rois[self.window_idx, i, j, 1],
-                                                self.rois[self.window_idx, i, j, 1]],
+                self.roi_views[i, j].setData(x=[self.rois[curr_idx, 0],
+                                                self.rois[curr_idx, 0],
+                                                self.rois[curr_idx, 2],
+                                                self.rois[curr_idx, 2],
+                                                self.rois[curr_idx, 0]],
+                                             y=[self.rois[curr_idx, 1],
+                                                self.rois[curr_idx, 3],
+                                                self.rois[curr_idx, 3],
+                                                self.rois[curr_idx, 1],
+                                                self.rois[curr_idx, 1]],
                                                 pen='r')
             else:
                 self.roi_views[i, j].setData(x=[], y=[], pen='r')
