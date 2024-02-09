@@ -222,7 +222,6 @@ class ImageGrid(QWidget):
         self.masks = np.ndarray(shape=self.n_windows * self.n_images_displayed, 
                                 dtype=object)
         self.masks.fill([])
-        print(self.masks.shape)
 
         if os.path.exists(os.path.join(self.path, 'rois.txt')):
             self.rois = np.loadtxt(os.path.join(self.path, "rois.txt"), 
