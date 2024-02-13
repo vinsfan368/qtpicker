@@ -221,7 +221,6 @@ class ImageGrid(QWidget):
         self.n_windows = int(np.ceil(self.n_snaps / self.n_images_displayed))
         self.masks = np.ndarray(shape=self.n_windows * self.n_images_displayed, 
                                 dtype=object)
-        self.masks.fill([])
 
         if os.path.exists(os.path.join(self.path, 'rois.txt')):
             self.rois = np.loadtxt(os.path.join(self.path, "rois.txt"), 
@@ -245,29 +244,32 @@ class ImageGrid(QWidget):
 
                 # Get mask corresponding to this image and read in
                 mask_filename = os.path.join(self.path, "masks", f"{j+1}.csv")
-                if os.path.exists(mask_filename):
-                    # Load mask from CSV
-                    mask = np.loadtxt(mask_filename, delimiter=',')
+                if not os.path.exists(mask_filename):
+                    self.masks[j] = []
+                    continue
 
-                    # Only look at masks inside ROI if specified
-                    if self.roi_masks_only and self.rois is not None:
-                        # Get ROI for this image
-                        roi = self.rois[j]
-                        # Crop mask to ROI
-                        crop = mask[roi[0]:roi[2], roi[1]:roi[3]]
-                        # Get only unique indices within the ROI
-                        idx, counts = np.unique(crop[crop > 0], return_counts=True)
-                    else:
-                        # Else get all unique indices in the mask
-                        idx, counts = np.unique(mask[mask > 0], return_counts=True)
-                        
-                    # Create a mask for each non-zero value if over min area
-                    ma_indices = idx[counts > self.min_mask_area]
-                    self.masks[j] = [ClickableEditableLabeledMask(mask == v, 
-                                                                  opacity=self.opacity,
-                                                                  possible_labels=self.possible_labels,
-                                                                  colors=self.colors) \
-                                    for v in ma_indices]
+                # Load mask from CSV
+                mask = np.loadtxt(mask_filename, delimiter=',')
+
+                # Only look at masks inside ROI if specified
+                if self.roi_masks_only and self.rois is not None:
+                    # Get ROI for this image
+                    roi = self.rois[j]
+                    # Crop mask to ROI
+                    crop = mask[roi[0]:roi[2], roi[1]:roi[3]]
+                    # Get only unique indices within the ROI
+                    idx, counts = np.unique(crop[crop > 0], return_counts=True)
+                else:
+                    # Else get all unique indices in the mask
+                    idx, counts = np.unique(mask[mask > 0], return_counts=True)
+                    
+                # Create a mask for each non-zero value if over min area
+                ma_indices = idx[counts > self.min_mask_area]
+                self.masks[j] = [ClickableEditableLabeledMask(mask == v, 
+                                                                opacity=self.opacity,
+                                                                possible_labels=self.possible_labels,
+                                                                colors=self.colors) \
+                                for v in ma_indices]
     
     def init_UI(self):
         """Initialize the user interface."""
@@ -295,8 +297,11 @@ class ImageGrid(QWidget):
             # Add ROI objects
             self.roi_views[i, j] = PlotDataItem(x=[], y=[])
             self.image_views[i, j].addItem(self.roi_views[i, j])
-                # Add buttons to go through channels
         
+        short_edge = np.where(self.grid_shape == np.min(self.grid_shape))[0][0]
+        n_buttons = 9
+
+        # Add buttons to go through channels
         self.B_next_chan = QPushButton("Next channel (w, ↑)", self.window)
         self.B_prev_chan = QPushButton("Previous channel (s, ↓)", self.window)
         self.layout.addWidget(self.B_next_chan, i+1, 0)
@@ -520,8 +525,8 @@ class ImageGrid(QWidget):
 
         # Set title
         self.window.setWindowTitle("Cells {} to {}, channel {}" \
-                                   .format(self.window_idx * self.n_images_displayed+1, 
-                                           (self.window_idx+1) * self.n_images_displayed, 
+                                   .format(self.window_idx*self.n_images_displayed+1, 
+                                           (self.window_idx+1)*self.n_images_displayed, 
                                            os.path.basename(self.snaps_folders[self.channel_idx])))
 
         # Get new images
@@ -535,6 +540,7 @@ class ImageGrid(QWidget):
         # Update image views
         for i, j in np.ndindex(self.image_views.shape):
             curr_idx = i * self.grid_shape[1] + j
+            # Add a blank image and ROI box if we are at the end of the data
             if curr_idx >= len(self.curr_indices):
                 self.image_views[i, j].setImage(np.zeros((10, 10)))
                 self.roi_views[i, j].setData(x=[], y=[], pen='r')
