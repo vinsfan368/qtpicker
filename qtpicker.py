@@ -538,13 +538,14 @@ class ImageGrid(QWidget):
         # End freestyle mode by creating a mask from the drawn points
         else:
             self.freestyle_mode = False
-            # Get zoom and pan
-            zoom = self.image_views[0, 0].view.getViewBox().viewRect()
-            print(zoom)
             self.connect_navigation_buttons_shortcuts()
+            viewboxes = np.ndarray(shape=self.image_views.shape, dtype=object)
             for i, j in np.ndindex(self.image_views.shape):
                 self.image_views[i, j].imageItem.setDrawKernel(kernel=None,
                     mask=None, center=None)
+
+                # Get current viewbox so we can reset it after drawing
+                viewboxes[i, j] = self.image_views[i, j].view.getState()
                 
                 # Get points drawn
                 im = self.image_views[i, j].imageItem.image
@@ -553,7 +554,6 @@ class ImageGrid(QWidget):
                 try:
                     points = get_mask_points(mask)
                     enclosed_mask = create_enclosed_mask(points, im.shape)
-
                     ma = ClickableEditableLabeledMask(enclosed_mask,
                                                       opacity=self.opacity,
                                                       possible_labels=self.possible_labels,
@@ -564,14 +564,14 @@ class ImageGrid(QWidget):
                 except IndexError:
                     continue
 
-            self.update_window()
+            self.update_window(viewboxes=viewboxes)
             if not self.masks_shown:
                 self.toggle_masks()
             self.add_masks()
             self.draw_val += 2
             self.B_freestyle.setText("Draw masks (r)")
 
-    def update_window(self):
+    def update_window(self, viewboxes=None):
         """Update the current window."""
         # Make sure window index is valid
         if self.window_idx < 0:
@@ -622,6 +622,13 @@ class ImageGrid(QWidget):
                                                 pen='r')
             else:
                 self.roi_views[i, j].setData(x=[], y=[], pen='r')
+            
+            # Set ViewBox if provided
+            if viewboxes is not None:
+                try:
+                    self.image_views[i, j].view.setState(viewboxes[i, j])
+                except:
+                    pass
 
     def save_state(self):
         """Save the masks as an NPZ file, giving the user a stopping point."""
