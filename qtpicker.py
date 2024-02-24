@@ -23,6 +23,7 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize 
 
 # Image tools
+import tifffile
 from quot.read import ImageReader
 from scipy import ndimage
 from skimage.measure import inertia_tensor_eigvals
@@ -34,11 +35,6 @@ from matplotlib.path import Path
 
 # Progress bar
 from tqdm import tqdm
-
-# Pickle
-import pickle
-
-import tifffile
 
 
 def create_enclosed_mask(points, shape):
@@ -58,7 +54,6 @@ def create_enclosed_mask(points, shape):
     coordinates = np.column_stack((x.flatten(), y.flatten()))
     mask = Path(points).contains_points(coordinates).reshape(shape)
     return mask
-
 
 def create_integer_mask(point_sets, shape):
     """
@@ -371,8 +366,6 @@ class ImageGrid(QWidget):
         self.left_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Left), self.window)
         self.right_shortcut = QShortcut(QKeySequence(QtGui_Qt.Key_Right), self.window)
 
-        self.connect_navigation_buttons_shortcuts()
-
         # Add a button to toggle editable masks
         self.B_toggle_editable = QPushButton("Toggle editable (e)", self.window)
         self.B_toggle_editable.clicked.connect(self.toggle_editable)
@@ -420,6 +413,7 @@ class ImageGrid(QWidget):
         self.add_masks()
 
         # Resize main window and show
+        self.connect_navigation_buttons_shortcuts()
         self.window.resize(1280, 720)
         self.window.show()        
 
@@ -489,8 +483,8 @@ class ImageGrid(QWidget):
     
     def toggle_editable(self):
         self.edit_mode = not self.edit_mode
-        if not self.masks_shown:
-            self.toggle_masks()
+        #if not self.masks_shown:
+        #    self.toggle_masks()
         for i, j in np.ndindex(self.image_views.shape):
             curr_idx = i * self.grid_shape[1] + j
             try:
@@ -539,13 +533,13 @@ class ImageGrid(QWidget):
         else:
             self.freestyle_mode = False
             self.connect_navigation_buttons_shortcuts()
-            viewboxes = np.ndarray(shape=self.image_views.shape, dtype=object)
+            view_ranges = np.ndarray(shape=self.image_views.shape, dtype=object)
             for i, j in np.ndindex(self.image_views.shape):
                 self.image_views[i, j].imageItem.setDrawKernel(kernel=None,
                     mask=None, center=None)
 
-                # Get current viewbox so we can reset it after drawing
-                viewboxes[i, j] = self.image_views[i, j].view.getState()
+                # Get current viewbox state so we can reset it after drawing
+                view_ranges[i, j] = self.image_views[i, j].view.getState()
                 
                 # Get points drawn
                 im = self.image_views[i, j].imageItem.image
@@ -564,14 +558,14 @@ class ImageGrid(QWidget):
                 except IndexError:
                     continue
 
-            self.update_window(viewboxes=viewboxes)
+            self.update_window(view_ranges=view_ranges)
             if not self.masks_shown:
                 self.toggle_masks()
             self.add_masks()
             self.draw_val += 2
             self.B_freestyle.setText("Draw masks (r)")
 
-    def update_window(self, viewboxes=None):
+    def update_window(self, view_ranges=None):
         """Update the current window."""
         # Make sure window index is valid
         if self.window_idx < 0:
@@ -623,10 +617,10 @@ class ImageGrid(QWidget):
             else:
                 self.roi_views[i, j].setData(x=[], y=[], pen='r')
             
-            # Set ViewBox if provided
-            if viewboxes is not None:
+            # Set ViewBox states if provided
+            if view_ranges is not None:
                 try:
-                    self.image_views[i, j].view.setState(viewboxes[i, j])
+                    self.image_views[i, j].view.setState(view_ranges[i, j])
                 except:
                     pass
 
