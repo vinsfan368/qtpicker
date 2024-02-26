@@ -1,5 +1,6 @@
-import sys
-
+"""
+qtpicker.py: A GUI for picking cells in a grid of images.
+"""
 # Paths, suppress annoying Qt warning
 import os
 os.environ['QT_LOGGING_RULES'] = 'qt.pointer.dispatch=false'
@@ -17,7 +18,7 @@ from PySide6.QtGui import Qt as QtGui_Qt
 
 # Plotting, colors
 import pyqtgraph
-pyqtgraph.setConfigOptions(imageAxisOrder='row-major')
+pyqtgraph.setConfigOptions(imageAxisOrder='row-major')  # We use (x, y) indexing
 from pyqtgraph import ImageView, ImageItem, PolyLineROI, mkColor, PlotDataItem
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize 
@@ -37,18 +38,22 @@ from matplotlib.path import Path
 from tqdm import tqdm
 
 
-def create_enclosed_mask(points, shape):
+###############
+## UTILITIES ##
+###############
+def create_enclosed_mask(points: list, shape: tuple) -> np.ndarray:
     """
-    Create an enclosed mask from a list of points.
+    Create an enclosed Boolean mask from a list of points.
 
-    Parameters:
-    points: List of points. Each point is a tuple of (x, y).
-    shape: Shape of the mask. A tuple of (height, width).
+    args:
+    -----
+    points  :   list or ndarray of shape (2, n), 
+                where each point is a tuple of (x, y).
+    shape   :   tuple of (height, width).
 
-    Returns:
-    An enclosed mask with the same shape. 
-    The mask has a value of 1 inside the 
-    enclosed area and 0 elsewhere.
+    return:
+    -------
+    mask    :   ndarray of type bool
     """
     y, x = np.indices(shape)
     coordinates = np.column_stack((x.flatten(), y.flatten()))
@@ -57,16 +62,19 @@ def create_enclosed_mask(points, shape):
 
 def create_integer_mask(point_sets, shape):
     """
-    Create an enclosed mask from a list of a list points.
+    Create an enclosed integer mask from a list of a list points.
 
-    Parameters:
-    points: List of points. Each point is a tuple of (x, y).
-    shape: Shape of the mask. A tuple of (width, height).
+    args:
+    -----
+    point_sets  :   list of (list or ndarray of shape (2, n)),
+                    where each point is a tuple of (x, y).
+    shape       :   tuple of (height, width).
 
-    Returns:
-    An enclosed mask with the same shape. 
-    The mask has a value of 1 inside the 
-    enclosed area and 0 elsewhere.
+    return:
+    -------
+    out_mask    :   ndarray of int, where the value at each coordinate
+                    is the index + 1 of the point set that contains it.
+                    Pixels outside all masks are 0.
     """
     y, x = np.indices(shape)
     coordinates = np.column_stack((x.flatten(), y.flatten()))
@@ -94,7 +102,9 @@ def get_eccentricity(binary_mask: np.ndarray):
         return 0
     return np.sqrt(1 - l2 / l1)
 
-
+##################
+## MASK CLASSES ##
+##################
 class ClickableMask(ImageItem):
     def __init__(self, parent):
         self.parent = parent
@@ -203,7 +213,9 @@ class ClickableEditableLabeledMask:
         self.editable_mask = EditableMask(self)
         self.add_to_imv()
     
-        
+###############
+## GUI CLASS ##
+###############        
 class ImageGrid(QWidget):
     """
     path                    :   str, path to automation folder
@@ -418,6 +430,8 @@ class ImageGrid(QWidget):
         self.window.show()        
 
     def connect_navigation_buttons_shortcuts(self):
+        """Allow for navigation between windows and channels
+        using buttons and keyboard shortcuts."""
         self.B_next_chan.clicked.connect(self.next_channel)
         self.B_prev_chan.clicked.connect(self.prev_channel)
         self.w_shortcut.activated.connect(self.next_channel)
@@ -432,6 +446,8 @@ class ImageGrid(QWidget):
         self.right_shortcut.activated.connect(self.next_window)
     
     def disconnect_navigation_buttons_shortcuts(self):
+        """Disallow navigation between windows and channels.
+        This is useful when we want to draw masks."""
         self.B_next_chan.clicked.disconnect(self.next_channel)
         self.B_prev_chan.clicked.disconnect(self.prev_channel)
         self.w_shortcut.activated.disconnect(self.next_channel)
@@ -446,15 +462,17 @@ class ImageGrid(QWidget):
         self.right_shortcut.activated.disconnect(self.next_window)
 
     def next_channel(self):
+        """Go to the next channel. Mask display is unchanged."""
         self.channel_idx = (self.channel_idx + 1) % self.n_channels
         self.update_window()
     
     def prev_channel(self):
+        """Go to the previous channel. Mask display is unchanged."""
         self.channel_idx = (self.channel_idx - 1) % self.n_channels
         self.update_window()
     
     def next_window(self):
-        """Go to the next grid of images."""
+        """Go to the next grid of images, update masks."""
         if self.masks_shown:
             self.remove_masks()
         if self.window_idx < self.n_windows:
@@ -464,7 +482,7 @@ class ImageGrid(QWidget):
             self.add_masks()
 
     def prev_window(self):
-        """Go to the previous grid of images."""
+        """Go to the previous grid of images, update masks."""
         if self.masks_shown:
             self.remove_masks()
         if self.window_idx > 0:
@@ -474,7 +492,7 @@ class ImageGrid(QWidget):
             self.add_masks()
     
     def toggle_masks(self):
-        """Toggle masks on and off."""
+        """Toggle masks on or off."""
         if self.masks_shown:
             self.remove_masks()
         else:
@@ -482,6 +500,8 @@ class ImageGrid(QWidget):
         self.masks_shown = not self.masks_shown
     
     def toggle_editable(self):
+        """Toggle between clickable (label-cycling mode) 
+        and editable (point-dragging mode) masks."""
         self.edit_mode = not self.edit_mode
         #if not self.masks_shown:
         #    self.toggle_masks()
@@ -494,7 +514,7 @@ class ImageGrid(QWidget):
                 continue
             
     def add_masks(self):
-        """Add the masks to their respective ImageViews."""
+        """For current ImageViews, add all relevant masks."""
         for i, j in np.ndindex(self.image_views.shape):
             curr_idx = i * self.grid_shape[1] + j
             try:
@@ -508,7 +528,7 @@ class ImageGrid(QWidget):
                 continue
     
     def remove_masks(self):
-        """Remove masks from their respective ImageViews."""
+        """For current ImageViews, remove all relevant masks."""
         for i, j in np.ndindex(self.image_views.shape):
             curr_idx = i * self.grid_shape[1] + j
             try:
@@ -518,6 +538,8 @@ class ImageGrid(QWidget):
                 continue
 
     def freestyle(self):
+        """ Toggle freestyle mode, where the user can draw masks
+        by clicking and dragging on the ImageViews."""
         # Start freestyle mode by enabling drawing on all ImageViews
         if not self.freestyle_mode:
             self.freestyle_mode = True
@@ -625,7 +647,7 @@ class ImageGrid(QWidget):
                     pass
 
     def save_state(self):
-        """Save the masks as an NPZ file, giving the user a stopping point."""
+        """Save all masks as an NPZ file, giving the user a stopping point."""
         arrays_to_save = {}
         for (i,), masks in np.ndenumerate(self.masks):
             # Stop if we've reached the end of the masks
@@ -678,7 +700,6 @@ class ImageGrid(QWidget):
     
     def apply_masks(self):
         """Save and apply masks."""
-        self.save_state()
         def mask_summary_plot(self):
             """Make a summary plot of the masks. This code was adapted
             from quot: https://github.com/alecheckert/quot"""
@@ -774,7 +795,7 @@ class ImageGrid(QWidget):
 
                 # Save a CSV file with the mask points. 
                 # Remember we flipped the points to facilitate 
-                # quot masking, so the column order is 'y', 'x'.
+                # quot masking, so the column order is 'y' then 'x'.
                 mask_df = pd.DataFrame(point_sets[j], columns=['y', 'x'])
                 mask_df['mask_index'] = ma_index
                 for chan in self.snaps_folders:
@@ -795,9 +816,14 @@ class ImageGrid(QWidget):
                                'mask_measurements', 
                                f"{i+1}_masks.csv")
             mask_df.to_csv(out, index=False)
+
+        # Make a save state
+        self.save_state()
             
         # Not implemented yet for masks outside ROI or if no ROIs are provided.
-        assert self.rois is not None, "No ROIs provided, cannot apply masks."
+        if self.rois is None:
+            print("No ROIs provided, cannot apply masks.")
+            return
 
         # Make sure output folders exist
         output_folders = ['masked_trajs', 'mask_plots', 'mask_measurements']
@@ -822,8 +848,7 @@ class ImageGrid(QWidget):
                 print(f"No masks to apply for {trajs_csv}, skipping...")
                 continue
 
-            # Apply masks and save; points need 
-            # to facilitate quot masking
+            # Apply masks and save; points are flipped for col-major quot masking
             point_sets = [np.flip(mask.points - [self.rois[i, 0], self.rois[i, 1]], 
                                   axis=1) 
                           for mask in valid_masks]
@@ -839,26 +864,25 @@ class ImageGrid(QWidget):
             
             mask_summary_csv(self)
 
-        # TODO: FIGURE OUT HOW TO SAVE IMAGEGRID
-        # Save ImageGrid as pickle
-        #with open(os.path.join(self.path, 'ImageGrid.pkl'), 'wb') as fh:
-        #    pickle.dump(self, fh)
-
 
 if __name__ == '__main__':
+    # Get path to automation output folder
     path = str(input("Drag automation output folder: ").strip())
     if not os.path.isdir(path) and os.name == 'posix':
         path = path.replace("\\ ", " ")
+
+    # If path is invalid, browse sample data
     if not os.path.isdir(path):
         print(f"{path} is not a valid path; browsing sample data instead...")
         path = os.path.join(os.path.dirname(__file__), "sample_data")
 
-    app = QApplication(sys.argv)
-    window = ImageGrid(path, 
-                       shape=(2, 4),
-                       save_mask_png=True, 
-                       roi_masks_only=True,
-                       possible_labels=['good', 'bad'],
-                       colors=['g', 'r'], 
-                       min_mask_area=1000)
+    # Run the GUI
+    app = QApplication()
+    window = ImageGrid(path,                            # automation output
+                       shape=(2, 4),                    # shape of image grid to display
+                       save_mask_png=True,              # save masking summary plots
+                       roi_masks_only=True,             # only show masks within ROI
+                       possible_labels=['good', 'bad'], # possible labels for masks
+                       colors=['g', 'r'],               # colors corresponding to labels
+                       min_mask_area=1000)              # reject masks smaller than this area
     app.exec()
