@@ -151,7 +151,8 @@ class ClickableEditableLabeledMask:
                  imv: ImageView=None, 
                  possible_labels: list[str]=['good', 'bad'],
                  colors: list[str]=['g', 'r'],
-                 clickable: bool=True, 
+                 clickable: bool=True,
+                 shown: bool=False, 
                  opacity: float=0.15):
         
         self.mask = mask
@@ -166,6 +167,7 @@ class ClickableEditableLabeledMask:
         self.colors = colors
         self.curr_label = self.possible_labels[self.idx]
         self.curr_color = self.colors[self.idx]
+        self.shown = shown
 
         self.clickable_mask = ClickableMask(self)
         self.editable_mask = EditableMask(self)
@@ -173,17 +175,30 @@ class ClickableEditableLabeledMask:
     def add_to_imv(self, imv=None):
         """Add the mask to the image view, 
         overwriting self.imv if provided."""
+        # Don't do anything if mask is already shown
+        if self.shown:
+            return
+        # Override self.imv if provided
         if imv is not None:
             self.imv = imv
+        # Add mask to image view
         if self.imv is not None:
             if self.clickable:
                 self.imv.addItem(self.clickable_mask)
-            else:
+            # Bad masks that are editable do not get added
+            elif not self.clickable and self.curr_label != 'bad':
                 self.imv.addItem(self.editable_mask)
+            else:
+                return
+        self.shown = True
     
     def remove_from_imv(self, imv=None):
         """Remove the mask from the image view, 
         overwriting self.imv if provided."""
+        # Don't do anything if mask is already removed
+        if not self.shown:
+            return
+        # Override self.imv if provided
         if imv is not None:
             self.imv = imv
         if self.imv is not None:
@@ -191,19 +206,21 @@ class ClickableEditableLabeledMask:
                 self.imv.removeItem(self.clickable_mask)
             else:
                 self.imv.removeItem(self.editable_mask)
+        self.shown = False
     
     def toggle_editable(self):
         """Change between a clickable and an editable mask."""
-        self.remove_from_imv()
+        if self.shown:
+            self.remove_from_imv()
+
         # Update ClickableMask in case points are changed
         if not self.clickable:
-            self.clickable_mask = ClickableMask(self)
+            self.clickable_mask = ClickableMask(self)        
+        
         self.clickable = not self.clickable
+      
+        self.add_to_imv()
 
-        # TODO: Catch QGraphicsScene::removeItem: item 0x16c36f510's scene (0x0) is different from this scene (0x15f7e2d50)
-        if self.curr_label != 'bad' or self.clickable:
-            self.add_to_imv()
-    
     def cycle_label(self):
         self.remove_from_imv()
         self.idx = (self.idx + 1) % len(self.possible_labels)
@@ -256,8 +273,8 @@ class ImageGrid(QWidget):
         self.init_UI()
     
     def init_data(self):
-        """Read in masks and images, match them up to each other, and
-        coerce them into an array to be displayed in the GUI."""
+        """Read in masks and images and  match them up 
+        to each other to be displayed in the UI"""
         self.snaps_folders = sorted(glob(os.path.join(self.path, "snaps2*")))
         self.snaps = glob(os.path.join(self.snaps_folders[0], "*.tif*"))
         self.n_snaps = len(self.snaps)
@@ -503,8 +520,6 @@ class ImageGrid(QWidget):
         """Toggle between clickable (label-cycling mode) 
         and editable (point-dragging mode) masks."""
         self.edit_mode = not self.edit_mode
-        #if not self.masks_shown:
-        #    self.toggle_masks()
         for i, j in np.ndindex(self.image_views.shape):
             curr_idx = i * self.grid_shape[1] + j
             try:
@@ -512,6 +527,9 @@ class ImageGrid(QWidget):
                     ma.toggle_editable()
             except IndexError:
                 continue
+        
+        if not self.masks_shown:
+            self.toggle_masks()
             
     def add_masks(self):
         """For current ImageViews, add all relevant masks."""
