@@ -38,6 +38,9 @@ from matplotlib.path import Path
 from tqdm import tqdm
 
 
+VERSION = "0.1.0"
+
+
 ###############
 ## UTILITIES ##
 ###############
@@ -489,7 +492,7 @@ class ImageGrid(QWidget):
         self.update_window()
     
     def next_window(self):
-        """Go to the next grid of images, update masks."""
+        """Go to the next grid of images and update masks."""
         if self.masks_shown:
             self.remove_masks()
         if self.window_idx < self.n_windows:
@@ -499,7 +502,7 @@ class ImageGrid(QWidget):
             self.add_masks()
 
     def prev_window(self):
-        """Go to the previous grid of images, update masks."""
+        """Go to the previous grid of images and update masks."""
         if self.masks_shown:
             self.remove_masks()
         if self.window_idx > 0:
@@ -884,6 +887,7 @@ class ImageGrid(QWidget):
 
 
 if __name__ == '__main__':
+    print(f"qtpicker (v{VERSION}) is a GUI for selecting and editing masks.")
     # Get path to automation output folder
     path = str(input("Drag automation output folder: ").strip())
     if not os.path.isdir(path) and os.name == 'posix':
