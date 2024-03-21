@@ -130,7 +130,7 @@ class ClickableMask(ImageItem):
 
     def on_mask_clicked(self):
         self.parent.cycle_label()
-        print(self.parent.curr_label)
+        #print(self.parent.curr_label)
 
 
 class EditableMask(PolyLineROI):
@@ -256,7 +256,8 @@ class ImageGrid(QWidget):
                  possible_labels: list[str]=['good', 'bad'],
                  colors: list[str]=['g', 'r'],
                  mask_opacity: float=0.15, 
-                 parent: object=None):
+                 parent: object=None,
+                 debug: bool=False):
         super(ImageGrid, self).__init__(parent=parent)
         self.path = path
         self.grid_shape = shape
@@ -268,6 +269,7 @@ class ImageGrid(QWidget):
         self.min_mask_area = min_mask_area
         self.possible_labels = possible_labels
         self.colors = colors
+        self.debug = debug
         self.freestyle_mode = False
         self.edit_mode = False
         self.masks_shown = True
@@ -484,11 +486,13 @@ class ImageGrid(QWidget):
     def next_channel(self):
         """Go to the next channel. Mask display is unchanged."""
         self.channel_idx = (self.channel_idx + 1) % self.n_channels
+        if self.debug: print(f"next_channel(): {self.channel_idx}")
         self.update_window()
     
     def prev_channel(self):
         """Go to the previous channel. Mask display is unchanged."""
         self.channel_idx = (self.channel_idx - 1) % self.n_channels
+        if self.debug: print(f"prev_channel(): {self.channel_idx}")
         self.update_window()
     
     def next_window(self):
@@ -497,6 +501,7 @@ class ImageGrid(QWidget):
             self.remove_masks()
         if self.window_idx < self.n_windows:
             self.window_idx += 1
+            if self.debug: print(f"next_window(): {self.window_idx}")
         self.update_window()
         if self.masks_shown:
             self.add_masks()
@@ -507,6 +512,7 @@ class ImageGrid(QWidget):
             self.remove_masks()
         if self.window_idx > 0:
             self.window_idx -= 1
+            if self.debug: print(f"prev_window(): {self.window_idx}")
         self.update_window()
         if self.masks_shown:
             self.add_masks()
@@ -518,6 +524,7 @@ class ImageGrid(QWidget):
         else:
             self.add_masks()
         self.masks_shown = not self.masks_shown
+        if self.debug: print(f"toggle_masks(): masks shown = {self.masks_shown}")
     
     def toggle_editable(self):
         """Toggle between clickable (label-cycling mode) 
@@ -530,7 +537,7 @@ class ImageGrid(QWidget):
                     ma.toggle_editable()
             except IndexError:
                 continue
-        
+        if self.debug: print(f"toggle_editable(): edit mode = {self.edit_mode}")     
         if not self.masks_shown:
             self.toggle_masks()
             
@@ -540,13 +547,14 @@ class ImageGrid(QWidget):
             curr_idx = i * self.grid_shape[1] + j
             try:
                 for ma in self.masks[self.curr_indices[curr_idx]]:
+                    ma.add_to_imv(self.image_views[i, j])
                     # Toggle if there's a mismatch between edit 
                     # mode and the mask's editability
                     if ma.clickable == self.edit_mode:
                         ma.toggle_editable()
-                    ma.add_to_imv(self.image_views[i, j])
             except IndexError:
                 continue
+        if self.debug: print("add_masks()")
     
     def remove_masks(self):
         """For current ImageViews, remove all relevant masks."""
@@ -557,6 +565,7 @@ class ImageGrid(QWidget):
                     ma.remove_from_imv()
             except IndexError:
                 continue
+        if self.debug: print("remove_masks()")
 
     def freestyle(self):
         """ Toggle freestyle mode, where the user can draw masks
@@ -664,8 +673,12 @@ class ImageGrid(QWidget):
             if view_ranges is not None:
                 try:
                     self.image_views[i, j].view.setState(view_ranges[i, j])
+                    if self.debug: print(f"update_window(): view range set for {i}, {j}")
                 except:
                     pass
+        
+        if self.debug: print(f"update_window(): default view ranges")
+            
 
     def save_state(self):
         """Save all masks as an NPZ file, giving the user a stopping point."""
@@ -906,5 +919,6 @@ if __name__ == '__main__':
                        roi_masks_only=True,             # only show masks within ROI
                        possible_labels=['good', 'bad'], # possible labels for masks
                        colors=['g', 'r'],               # colors corresponding to labels
-                       min_mask_area=1000)              # reject masks smaller than this area
+                       min_mask_area=1000,              # reject masks smaller than this area
+                       debug=False)              
     app.exec()
