@@ -38,7 +38,7 @@ from matplotlib.path import Path
 from tqdm import tqdm
 
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 
 ###############
@@ -897,6 +897,8 @@ class ImageGrid(QWidget):
                 mask_summary_plot(self)
             
             mask_summary_csv(self)
+        
+        print(f"Thanks for using qtpicker (v{VERSION})! Please report any bugs.")
 
 
 if __name__ == '__main__':
