@@ -114,9 +114,9 @@ class ClickableMask(ImageItem):
         self.points = parent.points
         self.mask = parent.mask
 
-        lut = np.zeros((len(parent.colors), 3))
+        lut = np.zeros((len(parent.colors), 4))
         color = mkColor(parent.curr_color)
-        lut[1] = (color.red(), color.green(), color.blue())
+        lut[1] = (color.red(), color.green(), color.blue(), 255)
 
         super().__init__(self.mask, opacity=parent.opacity, lut=lut)
 
@@ -130,7 +130,6 @@ class ClickableMask(ImageItem):
 
     def on_mask_clicked(self):
         self.parent.cycle_label()
-        #print(self.parent.curr_label)
 
 
 class EditableMask(PolyLineROI):
@@ -157,7 +156,6 @@ class ClickableEditableLabeledMask:
                  clickable: bool=True,
                  shown: bool=False, 
                  opacity: float=0.15):
-        
         self.mask = mask
         self.shape = mask.shape
         self.imv = imv
@@ -253,6 +251,7 @@ class ImageGrid(QWidget):
                  save_mask_png: bool=False,
                  roi_masks_only: bool=False,
                  min_mask_area: int=0,
+                 mask_format: str='.csv',
                  possible_labels: list[str]=['good', 'bad'],
                  colors: list[str]=['g', 'r'],
                  mask_opacity: float=0.15, 
@@ -269,11 +268,23 @@ class ImageGrid(QWidget):
         self.min_mask_area = min_mask_area
         self.possible_labels = possible_labels
         self.colors = colors
+        self.mask_format = mask_format
         self.debug = debug
         self.freestyle_mode = False
         self.edit_mode = False
         self.masks_shown = True
 
+        if self.debug:
+            print(f"ImageGrid: path = {self.path}")
+            print(f"ImageGrid: grid_shape = {self.grid_shape}")
+            print(f"ImageGrid: show_image_histogram = {self.show_hists}")
+            print(f"ImageGrid: save_mask_png = {self.save_mask_png}")
+            print(f"ImageGrid: roi_masks_only = {self.roi_masks_only}")
+            print(f"ImageGrid: mask_opacity = {self.opacity}")
+            print(f"ImageGrid: min_mask_area = {self.min_mask_area}")
+            print(f"ImageGrid: possible_labels = {self.possible_labels}")
+            print(f"ImageGrid: colors = {self.colors}")
+            
         self.init_data()
         self.init_UI()
     
@@ -291,6 +302,7 @@ class ImageGrid(QWidget):
             self.rois = np.loadtxt(os.path.join(self.path, "rois.txt"), 
                                    delimiter=',', 
                                    dtype=int)
+            if self.debug: print(f"ROIs loaded; shape {self.rois.shape}.")
         else:
             self.rois = None
             print("Warning: no ROIs found. No masks will be applied to this dataset.")
@@ -308,20 +320,27 @@ class ImageGrid(QWidget):
                     self.snaps_filepaths[i, j] = filename
 
                 # Get mask corresponding to this image and read in
-                mask_filename = os.path.join(self.path, "masks", f"{j+1}.csv")
+                mask_filename = os.path.join(self.path, "masks", f"{j+1}{self.mask_format}")
                 if not os.path.exists(mask_filename):
                     self.masks[j] = []
                     continue
-
+                
+                # Load mask from CSV                
+                if self.mask_format == '.csv':
+                    mask = np.loadtxt(mask_filename, delimiter=',')
                 # Load mask from CSV
-                mask = np.loadtxt(mask_filename, delimiter=',')
+                elif self.mask_format == '.tif':
+                    mask = tifffile.imread(mask_filename)
+                else:
+                    self.masks[j] = []
+                    continue
 
                 # Only look at masks inside ROI if specified
                 if self.roi_masks_only and self.rois is not None:
                     # Get ROI for this image
                     roi = self.rois[j]
                     # Crop mask to ROI
-                    crop = mask[roi[0]:roi[2], roi[1]:roi[3]]
+                    crop = mask[roi[1]:roi[3], roi[0]:roi[2]]
                     # Get only unique indices within the ROI
                     idx, counts = np.unique(crop[crop > 0], return_counts=True)
                 else:
@@ -365,16 +384,10 @@ class ImageGrid(QWidget):
         
         # Add buttons to the short edge of the grid
         n_buttons = 10
-        # If there are fewer columns than rows, add buttons to the right
-        if self.grid_shape[0] > self.grid_shape[1]:
-            button_indices = [(i % self.grid_shape[0], 
-                               i // self.grid_shape[0] + self.grid_shape[1]) 
-                              for i in range(n_buttons)]
-        # Else add buttons to the bottom
-        else:
-            button_indices = [(i // self.grid_shape[1] + self.grid_shape[0],
-                               i % self.grid_shape[1]) 
-                              for i in range(n_buttons)]
+        # Add buttons to the bottom
+        button_indices = [(i // self.grid_shape[1] + self.grid_shape[0],
+                            i % self.grid_shape[1]) 
+                            for i in range(n_buttons)]
 
         # Add buttons to go through channels
         self.B_next_chan = QPushButton("Next channel (w, ↑)", self.window)
@@ -655,17 +668,18 @@ class ImageGrid(QWidget):
             
             # Add ROI as a red box
             if self.rois is not None:
-                self.roi_views[i, j].setData(x=[self.rois[curr_idx, 0],
-                                                self.rois[curr_idx, 0],
-                                                self.rois[curr_idx, 2],
-                                                self.rois[curr_idx, 2],
-                                                self.rois[curr_idx, 0]],
-                                             y=[self.rois[curr_idx, 1],
-                                                self.rois[curr_idx, 3],
-                                                self.rois[curr_idx, 3],
-                                                self.rois[curr_idx, 1],
-                                                self.rois[curr_idx, 1]],
-                                                pen='r')
+                self.roi_views[i, j].setData(x=[self.rois[self.curr_indices[curr_idx], 0],
+                                                self.rois[self.curr_indices[curr_idx], 0],
+                                                self.rois[self.curr_indices[curr_idx], 2],
+                                                self.rois[self.curr_indices[curr_idx], 2],
+                                                self.rois[self.curr_indices[curr_idx], 0]],
+                                             y=[self.rois[self.curr_indices[curr_idx], 1],
+                                                self.rois[self.curr_indices[curr_idx], 3],
+                                                self.rois[self.curr_indices[curr_idx], 3],
+                                                self.rois[self.curr_indices[curr_idx], 1],
+                                                self.rois[self.curr_indices[curr_idx], 1]],
+                                             pen='r')
+                if self.debug: print(f"update_window(): ROI set to {self.rois[self.curr_indices[curr_idx]]}")
             else:
                 self.roi_views[i, j].setData(x=[], y=[], pen='r')
             
@@ -768,7 +782,7 @@ class ImageGrid(QWidget):
             densities = H[yx_int[:,0], yx_int[:,1]]
             norm = Normalize(vmin=0, vmax=densities.max())
 
-            # Make a 3-panel plot
+            # Make a 2 x 2 plot
             plt.close('all')
             _, axs = plt.subplots(2, 2, figsize=(8, 8))
             filename = os.path.join(self.path, 'snaps3', f"{i+1}.tif")
@@ -847,14 +861,14 @@ class ImageGrid(QWidget):
                 mask_dfs.append(mask_df)
             mask_df = pd.concat(mask_dfs)
             out = os.path.join(self.path, 
-                               'mask_measurements', 
-                               f"{i+1}_masks.csv")
+                                'mask_measurements', 
+                                f"{i+1}_masks.csv")
             mask_df.to_csv(out, index=False)
 
         # Make a save state
         self.save_state()
             
-        # Not implemented yet for masks outside ROI or if no ROIs are provided.
+        # Not implemented yet for masks outside ROI or if no ROIs are provided
         if self.rois is None:
             print("No ROIs provided, cannot apply masks.")
             return
@@ -922,5 +936,6 @@ if __name__ == '__main__':
                        possible_labels=['good', 'bad'], # possible labels for masks
                        colors=['g', 'r'],               # colors corresponding to labels
                        min_mask_area=1000,              # reject masks smaller than this area
-                       debug=False)              
+                       mask_format='.csv',              # extension of masks
+                       debug=True)              
     app.exec()
