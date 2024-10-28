@@ -18,16 +18,16 @@ from PySide6.QtGui import Qt as QtGui_Qt
 
 # Plotting, colors
 import pyqtgraph
-pyqtgraph.setConfigOptions(imageAxisOrder='row-major')  # We use (x, y) indexing
+pyqtgraph.setConfigOptions(imageAxisOrder='row-major')  # Use (x, y) indexing
 from pyqtgraph import ImageView, ImageItem, PolyLineROI, mkColor, PlotDataItem
 import matplotlib.pyplot as plt
 from matplotlib.colors import Normalize 
 
 # Image tools
-import tifffile
+from tifffile import imread
 from quot.read import ImageReader
 from scipy import ndimage
-from skimage.measure import inertia_tensor_eigvals
+from skimage.measure import regionprops_table
 
 # Masking tools
 from quot.helper import get_edges, get_ordered_mask_points
@@ -38,7 +38,16 @@ from matplotlib.path import Path
 from tqdm import tqdm
 
 
-VERSION = "0.1.1"
+VERSION = "1.1.1"
+ALLOWED_PROPERTIES = ['area', 'area_bbox', 'area_convex', 'area_filled', 
+                      'axis_major_length', 'axis_minor_length', 'bbox', 
+                      'centroid', 'centroid_local', 'coords_scaled', 'coords', 
+                      'eccentricity', 'equivalent_diameter_area', 
+                      'euler_number', 'extent', 'feret_diameter_max', 'image', 
+                      'image_convex', 'image_filled', 'image_intensity', 
+                      'intensity_max', 'intensity_mean', 'intensity_min', 
+                      'intensity_std', 'label', 'num_pixels', 'orientation', 
+                      'perimeter', 'perimeter_crofton', 'slice', 'solidity']
 
 
 ###############
@@ -85,25 +94,13 @@ def create_integer_mask(point_sets, shape):
     for i, points in enumerate(point_sets):
         mask = Path(points, closed=True).contains_points(coordinates).reshape(shape)
         out_mask[mask] = i+1
-    return out_mask
+    return out_mask.astype(int)
 
 def get_mask_points(mask, max_points=25):
     """Wrapper for quot.helper.get_ordered_mask_points, 
     returns flipped points to match row-major order."""
     return np.flip(get_ordered_mask_points(mask, max_points=max_points), 
                    axis=1)
-
-def get_eccentricity(binary_mask: np.ndarray):
-    """Taken from skimage:
-    Eccentricity of the ellipse that has the same second-moments as the
-    region. The eccentricity is the ratio of the focal distance
-    (distance between focal points) over the major axis length.
-    The value is in the interval [0, 1).
-    When it is 0, the ellipse becomes a circle."""
-    l1, l2 = inertia_tensor_eigvals(binary_mask)
-    if l1 == 0:
-        return 0
-    return np.sqrt(1 - l2 / l1)
 
 ##################
 ## MASK CLASSES ##
@@ -124,7 +121,7 @@ class ClickableMask(ImageItem):
         if event.button() == QtCore.Qt.LeftButton:
             pos = self.mapFromScene(event.scenePos())
             y, x = pos.x(), pos.y()
-            if 0 <= x < self.mask.shape[1] and 0 <= y < self.mask.shape[0]:
+            if 0 <= x < self.mask.shape[0] and 0 <= y < self.mask.shape[1]:
                 if self.mask[int(x), int(y)]:
                     self.on_mask_clicked()
 
@@ -154,7 +151,7 @@ class ClickableEditableLabeledMask:
                  possible_labels: list[str]=['good', 'bad'],
                  colors: list[str]=['g', 'r'],
                  clickable: bool=True,
-                 shown: bool=False, 
+                 shown: bool=False,
                  opacity: float=0.15):
         self.mask = mask
         self.shape = mask.shape
@@ -256,6 +253,7 @@ class ImageGrid(QWidget):
                  colors: list[str]=['g', 'r'],
                  mask_opacity: float=0.15, 
                  parent: object=None,
+                 properties: list[str]=['label'],
                  debug: bool=False):
         super(ImageGrid, self).__init__(parent=parent)
         self.path = path
@@ -284,12 +282,32 @@ class ImageGrid(QWidget):
             print(f"ImageGrid: min_mask_area = {self.min_mask_area}")
             print(f"ImageGrid: possible_labels = {self.possible_labels}")
             print(f"ImageGrid: colors = {self.colors}")
-            
+        
         self.init_data()
+        self.sanitize_properties(properties)
         self.init_UI()
     
+    def sanitize_properties(self, properties):
+        """Sanitize properties to only include allowed ones 
+        and figure out how to rename DF columns in outputs."""
+        allowed = [p for p in properties if p in ALLOWED_PROPERTIES]
+        if 'label' not in allowed: 
+            allowed.append('label') # Always include label
+        self.properties = allowed
+
+        rename_dict = {}
+        for p in allowed:
+            if 'centroid' in p:
+                rename_dict[f"{p}-0"] = f"{p}_x"
+                rename_dict[f"{p}-1"] = f"{p}_y"
+            elif 'intensity' in p:
+                for i, chan in enumerate(self.snaps_folders):
+                    rename_dict[f"{p}-{i}"] = f"{p}_{os.path.basename(chan)}"
+        
+        self.prop_rename_dict = rename_dict
+    
     def init_data(self):
-        """Read in masks and images and  match them up 
+        """Read in masks and images and match them up 
         to each other to be displayed in the UI"""
         self.snaps_folders = sorted(glob(os.path.join(self.path, "snaps2*")))
         self.snaps = glob(os.path.join(self.snaps_folders[0], "*.tif*"))
@@ -330,7 +348,7 @@ class ImageGrid(QWidget):
                     mask = np.loadtxt(mask_filename, delimiter=',')
                 # Load mask from CSV
                 elif self.mask_format == '.tif':
-                    mask = tifffile.imread(mask_filename)
+                    mask = imread(mask_filename)
                 else:
                     self.masks[j] = []
                     continue
@@ -382,9 +400,8 @@ class ImageGrid(QWidget):
             self.roi_views[i, j] = PlotDataItem(x=[], y=[])
             self.image_views[i, j].addItem(self.roi_views[i, j])
         
-        # Add buttons to the short edge of the grid
-        n_buttons = 10
         # Add buttons to the bottom
+        n_buttons = 10
         button_indices = [(i // self.grid_shape[1] + self.grid_shape[0],
                             i % self.grid_shape[1]) 
                             for i in range(n_buttons)]
@@ -442,18 +459,18 @@ class ImageGrid(QWidget):
 
         # Add a button to finish and apply masks
         self.B_apply_masks = QPushButton("Save and apply masks", self.window)
-        self.B_apply_masks.clicked.connect(self.apply_masks)
+        self.B_apply_masks.clicked.connect(self.save_apply_masks)
         self.layout.addWidget(self.B_apply_masks, *button_indices[7])
 
-        # Add a button to pickle masks
-        self.B_apply_masks = QPushButton("Save masking progress", self.window)
-        self.B_apply_masks.clicked.connect(self.save_state)
-        self.layout.addWidget(self.B_apply_masks, *button_indices[8])
+        # Add a button to save masks
+        self.B_save_state = QPushButton("Save masking progress", self.window)
+        self.B_save_state.clicked.connect(self.save_state)
+        self.layout.addWidget(self.B_save_state, *button_indices[8])
 
         # Add a button to load pickled masks
-        self.B_apply_masks = QPushButton("Load masking progress", self.window)
-        self.B_apply_masks.clicked.connect(self.load_state)
-        self.layout.addWidget(self.B_apply_masks, *button_indices[9])
+        self.B_load_masks = QPushButton("Load masking progress", self.window)
+        self.B_load_masks.clicked.connect(self.load_state)
+        self.layout.addWidget(self.B_load_masks, *button_indices[9])
 
         # Populate image views
         self.update_window()
@@ -652,7 +669,7 @@ class ImageGrid(QWidget):
                                       (self.window_idx+1) * self.n_images_displayed)
         self.curr_indices = self.curr_indices[self.curr_indices < self.n_snaps]
         curr_paths = list(self.snaps_filepaths[self.channel_idx, self.curr_indices])
-        self.curr_images = tifffile.imread(curr_paths)
+        self.curr_images = imread(curr_paths)
         if len(self.curr_images.shape) < 3:
             self.curr_images = np.expand_dims(self.curr_images, axis=0)
         # Update image views
@@ -739,15 +756,16 @@ class ImageGrid(QWidget):
                                                               idx=labels[i],
                                                               possible_labels=self.possible_labels,
                                                               colors=self.colors) \
-                                for i, v in enumerate(ma_indices)]
+                                 for i, v in enumerate(ma_indices)]
             except KeyError:
                 self.masks[j] = []
         
         if self.masks_shown:
             self.add_masks()
     
-    def apply_masks(self):
+    def save_apply_masks(self):
         """Save and apply masks."""
+
         def mask_summary_plot(self):
             """Make a summary plot of the masks. This code was adapted
             from quot: https://github.com/alecheckert/quot"""
@@ -759,21 +777,23 @@ class ImageGrid(QWidget):
             
             # Generate an image where each pixel is assigned to a mask
             mask_im = np.zeros((y_max, x_max), dtype=np.int64)
-            for j, points in enumerate(point_sets):
+            for j, points in enumerate(point_sets_roi):
                 path = Path(points, closed=True)
                 mask_im[path.contains_points(YX).reshape((y_max, x_max))] = j+1
 
             # Generate localization density
             y_bins = np.arange(y_max+1)
             x_bins = np.arange(x_max+1)
-            H, _, _ = np.histogram2d(valid_trajs['y'], valid_trajs['x'], bins=(y_bins, x_bins))
+            H, _, _ = np.histogram2d(valid_trajs['y'], 
+                                     valid_trajs['x'], 
+                                     bins=(y_bins, x_bins))
             H = ndimage.gaussian_filter(H, 3.0)
 
             # The set of points to use for the scatter plot
             L = np.asarray(valid_trajs[["y", "x", "mask_index"]])
 
-            # Categorize each localization as either (1) assigned or (2) not assigned
-            # to a mask
+            # Categorize each localization as either (1) 
+            # assigned or (2) not assigned to a mask
             inside = L[:,2] > 0
             outside = ~inside 
 
@@ -823,47 +843,6 @@ class ImageGrid(QWidget):
                         dpi=600, 
                         bbox_inches='tight')
             plt.close('all')
-        
-        def mask_summary_csv(self):
-            """Make a CSV with vertices and summary statistics for each FOV."""
-            mask_dfs = []
-            valid_idx = pd.unique(trajs[trajs['mask_index'] > 0]['mask_index'])
-            if len(valid_idx) < 1:
-                return
-            for j, ma_index in enumerate(valid_idx):
-                # Save a CSV file with trajectories inside only that mask                
-                trajs_in_mask = trajs[trajs['mask_index'] == ma_index]
-                out_path = os.path.join(self.path, 
-                                        'masked_trajs', 
-                                        f"{i+1}_{ma_index}_trajs.csv")
-                trajs_in_mask.to_csv(out_path, index=False)
-                n_dets = trajs_in_mask.shape[0]
-                n_trajs = trajs_in_mask['trajectory'].nunique()
-                n_jumps = n_dets - n_trajs
-
-                # Save a CSV file with the mask points. 
-                # Remember we flipped the points to facilitate 
-                # quot masking, so the column order is 'y' then 'x'.
-                mask_df = pd.DataFrame(point_sets[j], columns=['y', 'x'])
-                mask_df['mask_index'] = ma_index
-                for chan in self.snaps_folders:
-                    filename = os.path.join(chan, f"{i+1}.tif")
-                    im = ImageReader(filename).get_frame(0)
-                    mask = valid_masks[j].mask
-                    area = np.sum(mask)
-                    mask_df["area"] = area
-                    mask_df["eccentricity"] = get_eccentricity(mask)
-                    mask_df['n_dets'] = n_dets
-                    mask_df['n_trajs'] = n_trajs
-                    mask_df['n_jumps'] = n_jumps
-                    masked = mask * im
-                    mask_df[f"{os.path.basename(chan)}_mean_intensity"] = np.sum(masked) / area
-                mask_dfs.append(mask_df)
-            mask_df = pd.concat(mask_dfs)
-            out = os.path.join(self.path, 
-                                'mask_measurements', 
-                                f"{i+1}_masks.csv")
-            mask_df.to_csv(out, index=False)
 
         # Make a save state
         self.save_state()
@@ -885,6 +864,7 @@ class ImageGrid(QWidget):
             # Stop if we've reached the end of the masks
             if i >= self.n_snaps:
                 break
+            
             # Get trajs.csv file,  make sure it exists
             trajs_csv = os.path.join(self.path, 'tracking', f"{i+1}.csv")
             if not os.path.isfile(trajs_csv):
@@ -897,26 +877,69 @@ class ImageGrid(QWidget):
                 continue
 
             # Apply masks and save; points are flipped for col-major quot masking
-            point_sets = [np.flip(mask.points - [self.rois[i, 0], self.rois[i, 1]], 
-                                  axis=1) 
-                          for mask in valid_masks]
+            point_sets = [ma.points for ma in valid_masks]
+            point_sets_roi = [np.flip(pts - [self.rois[i, 0], self.rois[i, 1]], 
+                                      axis=1) 
+                              for pts in point_sets]
             trajs = pd.read_csv(trajs_csv)
-            trajs['mask_index'] = apply_masks(point_sets, 
-                                              trajs, 
-                                              mode='all_points')
+            mask_assignments = apply_masks(point_sets_roi, 
+                                           trajs, 
+                                           mode='all_points')
+            trajs['mask_index'] = mask_assignments
             trajs.to_csv(os.path.splitext(trajs_csv)[0] + "_trajs.csv", 
                          index=False)
+            
             # Make a summary plot if requested
             if self.save_mask_png:
                 mask_summary_plot(self)
             
-            mask_summary_csv(self)
-        
+            # Make a CSV with mask measurements
+            valid_indices = np.unique(mask_assignments[mask_assignments > 0])         
+            snaps_filepaths = [os.path.join(chan, f"{i+1}.tif") \
+                               for chan in self.snaps_folders]
+            images = imread(snaps_filepaths)
+            images = np.moveaxis(images, 0, -1)
+            table = regionprops_table(create_integer_mask(point_sets,
+                                                          valid_masks[0].shape), 
+                                      images, 
+                                      properties=self.properties)
+            table = pd.DataFrame(table)
+            table['coords_y_x'] = pd.Series(dtype=object)   # Enforce dtype
+            for j, ps in enumerate(point_sets):
+                if j + 1 not in valid_indices:
+                    continue
+                
+                # Save a separate CSV file with trajs inside each mask
+                trajs_in_mask = trajs.loc[trajs['mask_index'] == j+1]
+                out_path = os.path.join(self.path, 
+                                        'masked_trajs', 
+                                        f"{i+1}_{j+1}_trajs.csv")
+                trajs_in_mask.to_csv(out_path, index=False)
+
+                # Get some stats for detections in each mask and add to DF
+                n_dets = trajs_in_mask.shape[0]
+                n_trajs = trajs_in_mask['trajectory'].nunique()
+                n_jumps = n_dets - n_trajs
+                table.loc[table['label'] == j+1, 'n_dets'] = n_dets
+                table.loc[table['label'] == j+1, 'n_trajs'] = n_trajs
+                table.loc[table['label'] == j+1, 'n_jumps'] = n_jumps
+                
+                # We flipped mask points to facilitate quot masking, 
+                # so coordinates are [y, x]!
+                table.at[table.index[table['label'] == j+1][0], 'coords_y_x'] = ps.tolist()
+
+            table.rename(columns=self.prop_rename_dict, inplace=True)
+            out_name = os.path.join(self.path, 
+                                    'mask_measurements', 
+                                    f"{i+1}_masks.csv")
+            table.to_csv(out_name, index=False)
+                    
         print(f"Thanks for using qtpicker (v{VERSION})! Please report any bugs.")
 
 
 if __name__ == '__main__':
     print(f"qtpicker (v{VERSION}) is a GUI for selecting and editing masks.")
+    
     # Get path to automation output folder
     path = str(input("Drag automation output folder: ").strip())
     if not os.path.isdir(path) and os.name == 'posix':
@@ -926,6 +949,11 @@ if __name__ == '__main__':
     if not os.path.isdir(path):
         print(f"{path} is not a valid path; browsing sample data instead...")
         path = os.path.join(os.path.dirname(__file__), "sample_data")
+
+    # skimage.measure.regionprops_table properties we're interested in
+    properties = ['label', 'area', 'centroid', 'eccentricity', 
+                  'intensity_mean', 'intensity_std', 'intensity_max', 
+                  'intensity_min', 'perimeter', 'solidity']
 
     # Run the GUI
     app = QApplication()
@@ -937,5 +965,6 @@ if __name__ == '__main__':
                        colors=['g', 'r'],               # colors corresponding to labels
                        min_mask_area=1000,              # reject masks smaller than this area
                        mask_format='.csv',              # extension of masks
+                       properties=properties,           # properties to measure
                        debug=True)              
     app.exec()
