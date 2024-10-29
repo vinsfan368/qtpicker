@@ -2,7 +2,7 @@
 Cell/FOV QC UI for automated imaging, to be integrated into an all-encompassing UI.
 
 ## Dependencies
-`quot` (https://github.com/alecheckert/quot) and its dependencies.
+`quot` (https://github.com/alecheckert/quot) and its dependencies and scikit-image > 0.24
 
 ## Using `qtpicker`
 Clone the repository with `git clone https://github.com/vinsfan368/qtpicker.git`. In an environment with `quot` installed, run `qtpicker` with `python qtpicker.py`, then follow the command-line prompts.
